@@ -211,7 +211,10 @@ fn v2c_trap_arrives_at_snmptrapd() {
         .expect("v2c trap not seen in log");
     // snmptrapd's `%P` renders as `<TYPE>, SNMP v<VERSION>, community <C>` —
     // anchor on the community string itself, not the whole field prefix.
-    assert!(line.contains("public"), "expected community 'public': {line}");
+    assert!(
+        line.contains("public"),
+        "expected community 'public': {line}"
+    );
     // The L3 source must NOT be 0.0.0.0 (a docker-userland-proxy artifact).
     // After switching the runner's docker daemon to iptables-NAT mode the
     // real source is preserved through the bridge.
@@ -249,7 +252,10 @@ fn v2c_default_uptime_does_not_crash_or_panic() {
     ]);
     let line = wait_for_log_line(baseline, |l| l.contains("v=2c"), Duration::from_secs(5))
         .expect("v2c trap with default uptime not seen in log");
-    assert!(line.contains("public"), "expected community 'public': {line}");
+    assert!(
+        line.contains("public"),
+        "expected community 'public': {line}"
+    );
     assert!(
         line.contains("1.3.6.1.6.3.1.1.5.1") || line.contains("coldStart"),
         "expected trap-OID in line: {line}"
@@ -275,7 +281,10 @@ fn v1_trap_arrives_with_explicit_agent_addr() {
     ]);
     let line = wait_for_log_line(baseline, |l| l.contains("v=1"), Duration::from_secs(5))
         .expect("v1 trap not seen in log");
-    assert!(line.contains("public"), "expected community 'public': {line}");
+    assert!(
+        line.contains("public"),
+        "expected community 'public': {line}"
+    );
     // Enterprise OID may render numeric (with `-On`) or symbolic depending
     // on the receiver's MIB-resolution config — accept either.
     assert!(
