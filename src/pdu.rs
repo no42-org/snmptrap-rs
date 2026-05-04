@@ -181,7 +181,7 @@ fn oid_from_slice(arcs: &[u32]) -> ObjectIdentifier {
 /// choice up to the sender; using a randomized 31-bit value avoids any clash
 /// with peer-side caches and stays positive.
 pub fn fresh_request_id() -> i32 {
-    use rand::Rng;
+    use rand::RngExt;
     let mut rng = rand::rng();
     rng.random_range(1..=i32::MAX)
 }

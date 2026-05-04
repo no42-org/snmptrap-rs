@@ -233,7 +233,7 @@ fn classify_raw_send(err: std::io::Error) -> Error {
 
 fn pick_ephemeral_port() -> u16 {
     // 49152..65535 is the IANA-recommended dynamic/private range.
-    use rand::Rng;
+    use rand::RngExt;
     rand::rng().random_range(49152..=65535)
 }
 
