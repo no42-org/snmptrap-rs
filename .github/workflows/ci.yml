@@ -127,6 +127,14 @@ jobs:
           test -n "$INTEG_BIN" -a -x "$INTEG_BIN" || { echo "could not find integration test binary" >&2; exit 1; }
           sudo setcap cap_net_raw+ep "$INTEG_BIN"
           sudo setcap cap_net_raw+ep target/debug/snmptrap-rs
+      - name: configure unreachable route for routing-failure test
+        # `routing_failure_does_not_blame_capabilities_linux` (archived task 9.6)
+        # needs the kernel sendto to return ENETUNREACH/EHOSTUNREACH so the
+        # test can observe the routing-vs-capability classification. Default
+        # routes would otherwise happily forward to TEST-NET-1 and the test
+        # would skip cleanly. Pinning the unreachable route makes the assertion
+        # actually fire on every CI run.
+        run: sudo ip route add unreachable 192.0.2.0/24
       - name: integration-test
         run: make integration-test
 

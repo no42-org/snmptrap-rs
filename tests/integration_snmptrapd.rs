@@ -381,3 +381,135 @@ fn spoofed_v1_src_addr_appears_in_l3_and_pdu() {
         "in-PDU agent-addr should inherit --src-addr: {line}"
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Privilege-failure diagnostics (archived tasks.md §9.5 / §9.6)
+//
+// These tests verify that `--src-addr` failures map to the correct error
+// class and produce the right user-facing message — the `setcap` recipe
+// for capability denials, plain routing-class messages for everything else.
+// They don't require the snmptrapd container (no trap is expected to
+// arrive); they test exit code + stderr only.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+#[ignore = "requires Linux"]
+fn eperm_emits_setcap_remediation_on_linux() {
+    // Task 9.5: when `--src-addr` is used without CAP_NET_RAW, the binary
+    // SHALL exit non-zero with a stderr message naming the
+    // `setcap cap_net_raw+ep` remediation.
+    //
+    // We can't easily drop caps from inside the test process (the CI lane
+    // grants the test binary CAP_NET_RAW). But `cp` doesn't preserve file
+    // capabilities by default, so a freshly-cp'd copy of `snmptrap-rs` is
+    // cap-less — exec'ing it produces a child without CAP_NET_RAW even
+    // when the parent test process has the cap.
+    if !cfg!(target_os = "linux") {
+        eprintln!("skipping: setcap remediation message is Linux-specific");
+        return;
+    }
+
+    let src = std::path::Path::new(env!("CARGO_BIN_EXE_snmptrap-rs"));
+    let tmp_dir = std::env::temp_dir().join(format!("snmptrap-rs-eperm-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+    let dst = tmp_dir.join("snmptrap-rs");
+    std::fs::copy(src, &dst).expect("copy production binary");
+
+    let output = std::process::Command::new(&dst)
+        .args([
+            "-v",
+            "2c",
+            "-c",
+            "public",
+            "--src-addr",
+            "198.51.100.42",
+            "127.0.0.1:31620",
+            "12345",
+            "1.3.6.1.6.3.1.1.5.1",
+        ])
+        .output()
+        .expect("run no-caps binary");
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit when --src-addr is used without CAP_NET_RAW;\nstatus: {:?}\nstderr:\n{stderr}",
+        output.status,
+    );
+    assert!(
+        stderr.contains("setcap cap_net_raw+ep"),
+        "expected `setcap cap_net_raw+ep` remediation in stderr, got:\n{stderr}",
+    );
+    // The structured error should also include the underlying I/O error,
+    // which on Linux contains the strerror text for EPERM/EACCES.
+    assert!(
+        stderr.contains("Operation not permitted") || stderr.contains("Permission denied"),
+        "expected EPERM/EACCES strerror in stderr, got:\n{stderr}",
+    );
+}
+
+#[test]
+#[ignore = "requires Linux AND CAP_NET_RAW AND `ip route add unreachable 192.0.2.0/24`"]
+fn routing_failure_does_not_blame_capabilities_linux() {
+    // Task 9.6: when `--src-addr` is used WITH CAP_NET_RAW and the
+    // destination is unroutable, the binary SHALL classify the failure as
+    // Routing and SHALL NOT print the setcap recipe (which would be
+    // misleading since the process already has the capability).
+    //
+    // Requires the host to have a `unreachable` route covering the
+    // destination IP (TEST-NET-1, RFC 5737) so the kernel sendto returns
+    // ENETUNREACH. Without that route, the default route happily forwards
+    // and we cannot observe the routing-vs-capability discrimination — so
+    // we detect the success case and skip cleanly.
+    if !cfg!(target_os = "linux") {
+        eprintln!("skipping: routing classification messages are platform-specific");
+        return;
+    }
+    if !has_raw_privileges() {
+        eprintln!("skipping: requires CAP_NET_RAW (Linux) or root");
+        return;
+    }
+
+    let bin = env!("CARGO_BIN_EXE_snmptrap-rs");
+    let output = std::process::Command::new(bin)
+        .args([
+            "-v",
+            "2c",
+            "-c",
+            "public",
+            "--src-addr",
+            "198.51.100.42",
+            "192.0.2.50",
+            "12345",
+            "1.3.6.1.6.3.1.1.5.1",
+        ])
+        .output()
+        .expect("run snmptrap-rs");
+
+    if output.status.success() {
+        eprintln!(
+            "skipping: send to 192.0.2.50 succeeded — \
+             `ip route add unreachable 192.0.2.0/24` not configured on this host \
+             (the test is observable only when the kernel returns a routing error \
+             from sendto)"
+        );
+        return;
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("setcap cap_net_raw+ep"),
+        "stderr must NOT contain the setcap remediation for a routing failure \
+         (capability errors and routing errors must be classified distinctly), \
+         got:\n{stderr}",
+    );
+    // The error should name the routing condition.
+    assert!(
+        stderr.contains("send failed")
+            || stderr.contains("unreachable")
+            || stderr.contains("Network is unreachable"),
+        "expected routing-class error message in stderr, got:\n{stderr}",
+    );
+}
