@@ -265,12 +265,9 @@ mod tests {
         assert_eq!(hdr[9], 17);
         // TTL 64
         assert_eq!(hdr[8], 64);
-        // total length 20+28 = 48 (read in the byte order this kernel expects).
-        let total_len =
-            u16::from_ne_bytes([iphdr_u16_to_kernel(48)[0], iphdr_u16_to_kernel(48)[1]]);
-        // The bytes we wrote should equal what `iphdr_u16_to_kernel(48)` produces.
+        // total length 20+28 = 48 — bytes encoded for whatever order the
+        // kernel expects (network on Linux, host on macOS/BSD).
         assert_eq!([hdr[2], hdr[3]], iphdr_u16_to_kernel(48));
-        assert_eq!(total_len, 48);
         // DF flag set, no offset (also kernel-byte-order on BSD).
         assert_eq!([hdr[6], hdr[7]], iphdr_u16_to_kernel(0x4000));
         // src/dst correct
