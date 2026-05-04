@@ -103,7 +103,7 @@ No auto-detection of "host owns this IP" to fall back to `bind()`. One flag, one
 **Choice:** when v1 `<UPTIME>` or v2c `<UPTIME>` is `''`, substitute the host's current uptime in hundredths of a second.
 
 - Linux: read `/proc/uptime`.
-- macOS: `sysctl kern.boottime` and subtract from now.
+- macOS: `sysctl kern.boottime` (`CTL_KERN`/`KERN_BOOTTIME`) and subtract from `gettimeofday`. The implementation does proper carry/borrow on `tv_usec` (`if usecs < 0: secs -= 1; usecs += 1_000_000`) and clamps to 0 on negative skew (e.g. wall-clock-moved-back), then converts to centiseconds via saturating arithmetic. Naive subtraction without the borrow correction silently undercounts by ~1 s and produces 0 on backwards clock changes.
 
 **Alternatives considered:**
 
@@ -113,9 +113,9 @@ No auto-detection of "host owns this IP" to fall back to `bind()`. One flag, one
 
 ### D8: License = MIT, enforced in CI
 
-**Choice:** the project ships under the MIT license. CI runs `cargo-deny check licenses` (or equivalent) with an allowlist limited to `MIT`, `Apache-2.0`, `MIT OR Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `Zlib`, and `Unicode-DFS-2016`. Any new dependency outside the allowlist fails the build.
+**Choice:** the project ships under the MIT license. CI runs `cargo-deny check licenses` (or equivalent) with an allowlist limited to `MIT`, `Apache-2.0`, `MIT OR Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `Zlib`, `Unicode-DFS-2016`, and `Unicode-3.0`. Any new dependency outside the allowlist fails the build.
 
-**Rationale:** a lab tool that operators may bundle with internal test harnesses needs a permissive, predictable license story. Enforcement in CI prevents drift via transitive deps.
+**Rationale:** a lab tool that operators may bundle with internal test harnesses needs a permissive, predictable license story. Enforcement in CI prevents drift via transitive deps. `Unicode-3.0` is the modern SPDX identifier for the same Unicode license historically tracked as `Unicode-DFS-2016`; both are listed because crates in the dep graph (e.g. the `unicode-ident` family) have migrated to the new SPDX without functional change.
 
 ### D9: Build is driven by `make`, not `cargo` directly, in CI
 
@@ -125,9 +125,16 @@ No auto-detection of "host owns this IP" to fall back to `bind()`. One flag, one
 
 ### D10: `--debug-print-pdu` for wire-bytes hex dump
 
-**Choice:** add a `--debug-print-pdu` flag (no short alias). When set, immediately before send, the binary writes a hex+ASCII dump of the encoded SNMP message bytes to stderr. The dump SHALL include a one-line header (version, community redacted to `***`, dest, src, payload length) and the payload as a `xxd`-style hexdump. Stdout is unaffected.
+**Choice:** add a `--debug-print-pdu` flag (no short alias). When set, immediately before send, the binary writes a hex+ASCII dump of the encoded SNMP message bytes to stderr. The dump SHALL include a one-line header (version, community redacted to `***`, dest, src, src-port, payload length) and the payload as a `xxd`-style hexdump. Stdout is unaffected.
 
-**Rationale:** when a receiver doesn't see what was expected, the first question is "what bytes did we actually emit?" — answering it without strapping `tcpdump` next to the run is high-value-per-line-of-code. Stderr keeps it out of any structured stdout consumers.
+**Source-IP / source-port placeholder rule:** the source IP and source port in the header are reported only when known at print time, since the dump fires *before* the kernel binds. Specifically:
+
+- If `--src-addr` is set, the header reports its value; otherwise it reports the literal string `<kernel-selected>`.
+- If `--src-port` is set, the header reports its value; otherwise it reports the literal string `<ephemeral>`.
+
+The flag is **observation-only**: it MUST NOT alter any wire-emitted byte and MUST NOT trigger a probe (e.g. an egress-IP `connect()` to a UDP socket). An earlier draft of the implementation did probe the egress IP to fill the header; this was removed because it constituted a side effect attributable to the flag, contrary to the spec.
+
+**Rationale:** when a receiver doesn't see what was expected, the first question is "what bytes did we actually emit?" — answering it without strapping `tcpdump` next to the run is high-value-per-line-of-code. Stderr keeps it out of any structured stdout consumers. The placeholder convention keeps the header truthful: predicting the kernel's eventual choice is not the same as observing it.
 
 **Alternatives considered:**
 
@@ -137,6 +144,8 @@ No auto-detection of "host owns this IP" to fall back to `bind()`. One flag, one
 ### D11: Release binary is statically linked (musl on Linux)
 
 **Choice:** the `release` Makefile target builds with the `x86_64-unknown-linux-musl` (and `aarch64-unknown-linux-musl`) targets to produce statically linked binaries on Linux. macOS release builds use the default toolchain (no equivalent of musl). Distribution artifacts attached to GitHub releases SHALL be the static Linux binaries plus a macOS binary marked best-effort.
+
+**Best-effort marking convention:** macOS artifacts SHALL be uploaded with a `*-best-effort` filename suffix (e.g. `snmptrap-rs-aarch64-apple-darwin-best-effort`) so consumers can distinguish gated-Linux artifacts from non-gated macOS artifacts at a glance, without parsing release-notes prose. The release workflow's `publish` job does not depend on the macOS build legs, so a macOS failure is visible (red leg) but does not block the Linux release.
 
 **Rationale:** binaries with file capabilities (`setcap cap_net_raw+ep`) refuse to honor `LD_LIBRARY_PATH` and have surprising runtime-loader interactions with dynamically-linked libc. Static linking sidesteps the entire failure mode and makes the install-and-setcap recipe two lines instead of "and-also-make-sure-the-loader-can-find-glibc-NN".
 
@@ -155,7 +164,7 @@ No auto-detection of "host owns this IP" to fall back to `bind()`. One flag, one
 
 - **BCP38 / cloud egress filters drop spoofed packets** → Document prominently in README that `--src-addr` packets do not traverse the public internet, AWS/GCP/Azure VPCs, ESXi vSwitch port-security, or any network with reverse-path filtering on egress. Working in containers, VLAN-isolated lab nets, and namespaces is the supported environment.
 - **Linux `rp_filter` is mostly an ingress concern, but kernel hardening varies** → Smoke-test in CI on the Linux versions we claim to support; document any kernel sysctls that affect raw send if encountered.
-- **macOS raw IPv4 has historic quirks** (kernel rewrites a couple of header fields silently) → Mark macOS as best-effort; test in CI if feasible, otherwise document the limitation and gate macOS-specific tests behind an opt-in flag.
+- **macOS raw IPv4 has historic quirks** (kernel expects `ip_len` and `ip_off` in **host byte order**, not network byte order, when `IP_HDRINCL` is set; this is BSD-derived behavior) → **Resolved.** The implementation has a `cfg(any(macos, freebsd, openbsd, netbsd, dragonfly))` branch that writes those two fields in native byte order on BSDs and network byte order on Linux. Linux unit tests verify the network-byte-order path; macOS validation is done via the integration test harness when run with root.
 - **Wire-format drift from Net-SNMP** as `rasn-snmp` evolves → Pin major versions; golden-byte tests guard against drift on every CI run.
 - **Type-letter coverage gap** vs. libnetsnmp (we omit `F`, `D`, `I` non-standard extensions) → Document explicitly. Rejecting unknown letters with a clear error is better than silently mis-encoding.
 - **Counter64 is BER-ambiguous between INTEGER and Application-class tag** → `rasn-snmp` handles this via the SNMP application tag for `Counter64`; covered by golden tests.

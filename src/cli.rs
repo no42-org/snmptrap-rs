@@ -60,14 +60,16 @@ pub struct Cli {
     )]
     pub retries: u8,
 
-    /// Per-attempt timeout in seconds.
+    /// Accepted for Net-SNMP CLI compatibility. Trap PDUs are unconfirmed
+    /// (no peer ack), so this value has no effect on traps; reserved for
+    /// future inform-PDU support.
     #[arg(
         short = 't',
         long = "timeout",
         value_name = "SECONDS",
         default_value_t = 1
     )]
-    pub timeout: u8,
+    pub timeout: u32,
 
     /// Spoofed L3 source IPv4 address. Requires CAP_NET_RAW (Linux) or root (macOS).
     #[arg(long = "src-addr", value_name = "IPv4")]
@@ -95,7 +97,13 @@ impl Cli {
     pub fn parse_argv() -> Result<Self, Error> {
         match <Self as Parser>::try_parse() {
             Ok(cli) => cli.validate(),
-            Err(e) => Err(Error::Usage(e.to_string())),
+            Err(e) => match e.kind() {
+                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
+                    let _ = e.print();
+                    std::process::exit(0);
+                }
+                _ => Err(Error::Usage(e.to_string())),
+            },
         }
     }
 
@@ -115,6 +123,14 @@ impl Cli {
         if self.community.is_empty() {
             return Err(Error::Usage(
                 "community string (-c) must be non-empty for SNMPv1 and SNMPv2c".into(),
+            ));
+        }
+        if self.timeout == 0 {
+            return Err(Error::Usage("--timeout must be > 0 (in seconds)".into()));
+        }
+        if matches!(self.src_port, Some(0)) {
+            return Err(Error::Usage(
+                "--src-port 0 is not allowed; on UDP it means 'kernel-selected ephemeral'. Omit the flag to get an ephemeral port.".into(),
             ));
         }
         if let Some(s) = self.src_addr.as_deref() {
@@ -150,6 +166,12 @@ impl Cli {
 
 pub(crate) fn resolve_agent_string(agent: &str) -> Result<SocketAddrV4, Error> {
     let stripped = agent.strip_prefix("udp:").unwrap_or(agent);
+
+    if stripped.starts_with('[') || stripped.matches(':').count() >= 2 {
+        return Err(Error::Usage(format!(
+            "AGENT '{agent}' looks like IPv6; only IPv4 destinations are supported"
+        )));
+    }
 
     let (host, port) = match stripped.rsplit_once(':') {
         Some((h, p)) if !h.is_empty() && !h.contains(':') => {

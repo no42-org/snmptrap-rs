@@ -5,6 +5,12 @@
 //! input that affects the encoding except `request-id` (set by Net-SNMP at
 //! random for v2c). For v1 there is no `request-id` field, so byte-equality
 //! is exact.
+//!
+//! Coverage caveat: each fixture exercises exactly one trailing INTEGER
+//! varbind. Drift in the encoding of any other type letter (`u t a o s x n
+//! b U`) versus Net-SNMP would not be caught here. Capturing additional
+//! fixtures is tracked in the deferred-work list under
+//! "Net-SNMP fixture expansion to all type letters".
 
 use rasn::ber;
 use rasn::types::Integer;
@@ -17,15 +23,18 @@ use std::net::Ipv4Addr;
 fn load_fixture(name: &str) -> Vec<u8> {
     let path = format!("{}/tests/fixtures/{}", env!("CARGO_MANIFEST_DIR"), name);
     let raw = std::fs::read_to_string(&path).expect("fixture file");
-    let trimmed = raw.trim();
+    // Strip every ASCII whitespace character (covers internal newlines, CRLF,
+    // and editor-introduced spaces) so a slightly mis-formatted fixture file
+    // produces a clean base64 decode rather than an opaque error.
+    let cleaned: String = raw.chars().filter(|c| !c.is_ascii_whitespace()).collect();
     use base64::Engine as _;
     base64::engine::general_purpose::STANDARD
-        .decode(trimmed)
-        .expect("base64 decode")
+        .decode(&cleaned)
+        .unwrap_or_else(|e| panic!("base64 decode of {name}: {e}"))
 }
 
 #[test]
-fn v2c_trap_matches_netsnmp_capture_structurally() {
+fn v2c_trap_matches_netsnmp_capture_byte_for_byte() {
     let captured = load_fixture("netsnmp_v2c_trap.b64");
 
     // Decode the captured Net-SNMP message.
@@ -88,11 +97,28 @@ fn v1_trap_matches_netsnmp_capture_byte_for_byte() {
 }
 
 #[test]
-fn v1_trap_matches_via_decoded_fields() {
-    // Decode capture and assert on individual fields (in addition to byte
-    // equality) so that any future deviation is reported in human-readable terms.
-    let captured = load_fixture("netsnmp_v1_trap.b64");
-    let msg: snmp_v1::Message<snmp_v1::Trap> = ber::decode(&captured).unwrap();
+fn v1_trap_decoded_fields_match_inputs() {
+    // Encode our v1 trap, then decode the bytes WE produced back through rasn
+    // and assert each field. This complements the byte-for-byte test above:
+    // if the byte-eq test ever breaks, this test reports the divergence in
+    // human-readable terms (which field changed) rather than as a hex diff.
+    let ours = V1Trap {
+        community: b"public".to_vec(),
+        // 1.3.6.1.4.1.3.1.1 is Net-SNMP's `objid_enterprise`; we mirror it as
+        // `DEFAULT_V1_ENTERPRISE_OID` in `src/pdu.rs`. This test uses the
+        // explicit fixture-matching enterprise so byte-eq is preserved.
+        enterprise: vec![1, 3, 6, 1, 4, 1, 8072, 2, 3, 0, 1],
+        agent_addr: Ipv4Addr::new(10, 0, 0, 1),
+        generic: 6,
+        specific: 17,
+        uptime_centiseconds: 99999,
+        varbinds: vec![(
+            vec![1, 3, 6, 1, 4, 1, 8072, 2, 3, 2, 1],
+            VarBindValue::Integer(7),
+        )],
+    };
+    let our_bytes = build_v1_trap(&ours).expect("encode v1");
+    let msg: snmp_v1::Message<snmp_v1::Trap> = ber::decode(&our_bytes).unwrap();
     let trap = &msg.data;
 
     assert_eq!(msg.community.to_vec(), b"public".to_vec());

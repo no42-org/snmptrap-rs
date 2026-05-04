@@ -92,7 +92,7 @@ impl fmt::Display for Error {
                 write!(f, "(raw socket open failed: {underlying})")
             }
             Self::Unsupported(msg) => write!(f, "{msg}"),
-            Self::Routing(io) => write!(f, "{io}"),
+            Self::Routing(io) => write!(f, "send failed: {io}"),
             Self::Encode(msg) => write!(f, "encoding error: {msg}"),
             Self::Other(io) => write!(f, "{io}"),
         }

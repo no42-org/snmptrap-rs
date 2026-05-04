@@ -1,4 +1,9 @@
-FROM alpine:3.21
+# Pinned to a specific Alpine patch release so that base-image rebuilds cannot
+# silently bump net-snmp and invalidate the captured fixtures in
+# `tests/fixtures/`. When intentionally bumping this pin, re-capture both
+# `netsnmp_v1_trap.b64` and `netsnmp_v2c_trap.b64` from the new net-snmp version
+# and confirm the golden-bytes tests still pass.
+FROM alpine:3.21.3
 
 RUN apk add --no-cache net-snmp net-snmp-tools \
  && mkdir -p /var/log/snmp

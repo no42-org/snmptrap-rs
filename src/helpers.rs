@@ -61,10 +61,22 @@ fn macos_uptime_centiseconds() -> std::io::Result<u32> {
     }
     let now = unsafe { now.assume_init() };
 
-    let secs = now.tv_sec - boottime.tv_sec;
-    let usecs = (now.tv_usec - boottime.tv_usec) as i64;
-    let total_us = secs * 1_000_000 + usecs;
-    let centi = (total_us / 10_000).max(0) as u64;
+    let mut secs: i64 = now.tv_sec - boottime.tv_sec;
+    let mut usecs: i64 = i64::from(now.tv_usec) - i64::from(boottime.tv_usec);
+    if usecs < 0 {
+        secs -= 1;
+        usecs += 1_000_000;
+    }
+    if secs < 0 {
+        // Wall clock is earlier than the recorded boottime — treat as zero
+        // uptime rather than silently returning a large number through the
+        // saturating cast below.
+        return Ok(0);
+    }
+    let total_us = (secs as u64)
+        .saturating_mul(1_000_000)
+        .saturating_add(usecs as u64);
+    let centi = total_us / 10_000;
     Ok(centi.min(u32::MAX as u64) as u32)
 }
 

@@ -4,6 +4,10 @@ services:
       context: ./tests/docker
     container_name: snmptrap-rs-test-receiver
     ports:
-      - "31620:162/udp"
+      # Override via SNMPTRAP_RS_HOST_PORT to avoid collisions on shared CI runners.
+      # Bind to loopback only so a developer running tests on a public network
+      # does not expose snmptrapd (which runs with --disableAuthorization=yes)
+      # to the LAN.
+      - "127.0.0.1:${SNMPTRAP_RS_HOST_PORT:-31620}:162/udp"
     volumes:
       - ./tests/docker/log:/var/log/snmp

@@ -7,11 +7,15 @@ A small, self-contained Rust binary that **(a)** reproduces the parts of `snmptr
 ## What Changes
 
 - **NEW** `snmptrap-rs` binary (Rust, single crate) — sends SNMP traps over UDP/IPv4.
-- **NEW** CLI compatible with a working subset of Net-SNMP's `snmptrap`: SNMPv1 trap and SNMPv2c trap PDUs, common flags (`-v {1|2c}`, `-c COMMUNITY`, `-r RETRIES`, `-t TIMEOUT`), positional argument shapes matching the reference, var-bind type letters `i u t a o s x n b U`. Numeric OIDs only (no MIB resolution).
+- **NEW** CLI compatible with a working subset of Net-SNMP's `snmptrap`: SNMPv1 trap and SNMPv2c trap PDUs, common flags (`-v {1|2c}`, `-c COMMUNITY`, `-r RETRIES`), positional argument shapes matching the reference, var-bind type letters `i u t a o s x n b U`. Numeric OIDs only (no MIB resolution). `-t TIMEOUT` is accepted for argv-compat but is a no-op for trap PDUs (no peer ack to time out against); reserved for future inform-PDU support.
 - **NEW** `--src-addr <IP>` flag — when set, the trap is emitted with the chosen IPv4 source address via a raw IP socket with `IP_HDRINCL`. For SNMPv1 traps, the in-PDU `agent-addr` field is auto-populated from `--src-addr` if the user passes `""` for the agent positional, so receivers see a consistent identity at L3 and inside the PDU.
-- **NEW** `--src-port <port>` flag — pin the UDP source port (default ephemeral).
+- **NEW** `--src-port <port>` flag — pin the UDP source port (default ephemeral). `--src-port 0` is rejected (omit the flag for an ephemeral port).
+- **NEW** `--debug-print-pdu` flag — observation-only stderr hex+ASCII dump of the encoded SNMP message immediately before send. Header line redacts the community to `***` and uses literal placeholders (`<kernel-selected>`, `<ephemeral>`) when source IP / source port are kernel-selected. See design D10.
+- **NEW** `--binary-version` flag — prints the binary version and exits 0 to stdout. (`--version` is intentionally not bound — clap's default version flag is disabled because `-v` is already taken.)
+- **NEW** static-musl Linux release artifacts on tag push, x86_64 and aarch64 (per design D11). macOS release builds are best-effort with the default toolchain and use a `*-best-effort` filename suffix.
+- **NEW** Binary name `snmptrap-rs` on `$PATH` (per design D12) — no alias, no `rsnmptrap` link.
 - **NO** `setcap` is required unless `--src-addr` is used. When raw socket creation fails with `EPERM`, the binary prints a precise remediation message (the `setcap cap_net_raw+ep` recipe) and exits non-zero rather than surfacing a raw syscall error.
-- **OUT OF SCOPE for this change** (deferred to a future change): SNMPv3 (USM auth/priv, engine-ID discovery), SNMPv2c/v3 inform PDUs, IPv6 spoofing, MIB resolution (`-m`/`-M`), Windows support, alternate transports (TCP, DTLS, TLS, Unix), `snmpinform` dual-naming.
+- **OUT OF SCOPE for this change** (deferred to a future change): SNMPv3 (USM auth/priv, engine-ID discovery), SNMPv2c/v3 inform PDUs, IPv6 spoofing, MIB resolution (`-m`/`-M`), Windows support, alternate transports (TCP, DTLS, TLS, Unix), `snmpinform` dual-naming, Net-SNMP type letters `c` (Counter32) and `d` (decimal-byte-list).
 
 ## Capabilities
 

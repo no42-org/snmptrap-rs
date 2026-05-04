@@ -28,6 +28,33 @@ pub fn ip_checksum(data: &[u8]) -> u16 {
     !(sum as u16)
 }
 
+/// Encode a 16-bit IPv4-header field that BSD-derived raw(4) implementations
+/// expect in **host** byte order (`ip_len`, `ip_off` on macOS / *BSD); on
+/// Linux these go on the wire untouched and so are written in network order.
+/// See FreeBSD raw(4), Apple xnu `bsd/netinet/raw_ip.c`, and Linux raw(7).
+fn iphdr_u16_to_kernel(val: u16) -> [u8; 2] {
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly",
+    ))]
+    {
+        val.to_ne_bytes()
+    }
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly",
+    )))]
+    {
+        val.to_be_bytes()
+    }
+}
+
 /// Build a 20-byte IPv4 header with the given parameters. DF set, TTL=64,
 /// protocol=UDP(17). Header checksum filled in.
 pub fn build_ipv4_header(
@@ -40,9 +67,9 @@ pub fn build_ipv4_header(
     let mut hdr = [0u8; 20];
     hdr[0] = (4 << 4) | 5; // version=4, IHL=5
     hdr[1] = 0; // DSCP/ECN
-    hdr[2..4].copy_from_slice(&total_length.to_be_bytes());
+    hdr[2..4].copy_from_slice(&iphdr_u16_to_kernel(total_length));
     hdr[4..6].copy_from_slice(&identification.to_be_bytes());
-    hdr[6..8].copy_from_slice(&0x4000u16.to_be_bytes()); // Flags=DF, FragOff=0
+    hdr[6..8].copy_from_slice(&iphdr_u16_to_kernel(0x4000u16)); // Flags=DF, FragOff=0
     hdr[8] = 64; // TTL
     hdr[9] = 17; // protocol = UDP
     hdr[10..12].copy_from_slice(&[0, 0]); // checksum placeholder
@@ -95,48 +122,62 @@ pub fn build_udp_datagram(
     out
 }
 
+/// Maximum payload size that fits in a single IPv4 datagram after the
+/// 20-byte IP header and 8-byte UDP header (`u16::MAX - 28 = 65507`). Past
+/// this the IP `total_length` and UDP `length` fields would silently wrap.
+const MAX_UDP_PAYLOAD: usize = (u16::MAX as usize) - 20 - 8;
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn send_spoofed(
     dst: SocketAddrV4,
     src: Ipv4Addr,
     src_port: Option<u16>,
-    timeout: Duration,
+    _timeout: Duration,
     retries: u8,
     payload: &[u8],
 ) -> Result<(), Error> {
     use socket2::{Domain, Protocol, Socket, Type};
-    use std::io::Write;
+
+    if payload.len() > MAX_UDP_PAYLOAD {
+        return Err(Error::Other(std::io::Error::other(format!(
+            "SNMP payload {} bytes exceeds IPv4/UDP single-datagram max {}",
+            payload.len(),
+            MAX_UDP_PAYLOAD,
+        ))));
+    }
 
     let sock =
-        Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::UDP)).map_err(classify_raw_io)?;
-    sock.set_header_included_v4(true).map_err(classify_raw_io)?;
-    sock.set_write_timeout(Some(timeout))
-        .map_err(classify_raw_io)?;
+        Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::UDP)).map_err(classify_raw_open)?;
+    sock.set_header_included_v4(true)
+        .map_err(classify_raw_open)?;
 
     let chosen_src_port = src_port.unwrap_or_else(pick_ephemeral_port);
     let udp = build_udp_datagram(src, *dst.ip(), chosen_src_port, dst.port(), payload);
-    let ident: u16 = rand::random();
-    let ip = build_ipv4_header(src, *dst.ip(), udp.len() as u16, ident);
-
-    let mut packet = Vec::with_capacity(ip.len() + udp.len());
-    packet.extend_from_slice(&ip);
-    packet.extend_from_slice(&udp);
 
     let dst_sa: std::net::SocketAddr = std::net::SocketAddr::V4(dst);
     let dst_sock2 = socket2::SockAddr::from(dst_sa);
 
     let mut last_err: Option<std::io::Error> = None;
-    for _ in 0..=retries {
-        // socket2 send_to doesn't take a Write; we use the raw send_to.
+    let mut budget: i32 = retries as i32 + 1;
+    while budget > 0 {
+        // Fresh IP `Identification` per attempt so retransmits don't collide
+        // with the first packet's tuple if it actually got out.
+        let ident: u16 = rand::random();
+        let ip = build_ipv4_header(src, *dst.ip(), udp.len() as u16, ident);
+        let mut packet = Vec::with_capacity(ip.len() + udp.len());
+        packet.extend_from_slice(&ip);
+        packet.extend_from_slice(&udp);
+
         match sock.send_to(&packet, &dst_sock2) {
-            Ok(_) => {
-                let _ = std::io::stderr().flush();
-                return Ok(());
+            Ok(_) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => {
+                last_err = Some(e);
+                budget -= 1;
             }
-            Err(e) => last_err = Some(e),
         }
     }
-    Err(classify_raw_io(last_err.unwrap_or_else(|| {
+    Err(classify_raw_send(last_err.unwrap_or_else(|| {
         std::io::Error::other("raw send_to failed without an OS error")
     })))
 }
@@ -156,12 +197,31 @@ pub fn send_spoofed(
     ))
 }
 
-fn classify_raw_io(err: std::io::Error) -> Error {
+/// Errors during socket creation / `IP_HDRINCL` setsockopt. `EPERM`/`EACCES`
+/// here unambiguously means missing `CAP_NET_RAW` (Linux) or non-root (macOS).
+fn classify_raw_open(err: std::io::Error) -> Error {
     match err.raw_os_error() {
         Some(libc::EPERM) | Some(libc::EACCES) => Error::RawSocketDenied {
             platform: Platform::current(),
             underlying: err,
         },
+        _ => Error::Other(err),
+    }
+}
+
+/// Errors during `send_to` after the raw socket is open. `EACCES` here is
+/// **not** a capability problem (open already succeeded) — it typically means
+/// the destination is broadcast/multicast and `SO_BROADCAST` is unset, or a
+/// netfilter/MAC policy rejected the packet. Classify all such cases as
+/// routing-class so the user does not see a spurious `setcap` recipe.
+fn classify_raw_send(err: std::io::Error) -> Error {
+    match err.raw_os_error() {
+        Some(libc::EHOSTUNREACH)
+        | Some(libc::ENETUNREACH)
+        | Some(libc::EADDRNOTAVAIL)
+        | Some(libc::EMSGSIZE)
+        | Some(libc::EACCES)
+        | Some(libc::EPERM) => Error::Routing(err),
         _ => match err.kind() {
             std::io::ErrorKind::HostUnreachable
             | std::io::ErrorKind::NetworkUnreachable
@@ -201,15 +261,18 @@ mod tests {
         let hdr = build_ipv4_header(src, dst, 28, 0xBEEF);
         // version 4, IHL 5
         assert_eq!(hdr[0], 0x45);
-        // DF flag set, no offset
-        assert_eq!(hdr[6], 0x40);
-        assert_eq!(hdr[7], 0x00);
         // protocol UDP
         assert_eq!(hdr[9], 17);
         // TTL 64
         assert_eq!(hdr[8], 64);
-        // total length 20+28 = 48
-        assert_eq!(u16::from_be_bytes([hdr[2], hdr[3]]), 48);
+        // total length 20+28 = 48 (read in the byte order this kernel expects).
+        let total_len =
+            u16::from_ne_bytes([iphdr_u16_to_kernel(48)[0], iphdr_u16_to_kernel(48)[1]]);
+        // The bytes we wrote should equal what `iphdr_u16_to_kernel(48)` produces.
+        assert_eq!([hdr[2], hdr[3]], iphdr_u16_to_kernel(48));
+        assert_eq!(total_len, 48);
+        // DF flag set, no offset (also kernel-byte-order on BSD).
+        assert_eq!([hdr[6], hdr[7]], iphdr_u16_to_kernel(0x4000));
         // src/dst correct
         assert_eq!(&hdr[12..16], &src.octets());
         assert_eq!(&hdr[16..20], &dst.octets());
