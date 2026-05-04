@@ -15,4 +15,5 @@ EXPOSE 162/udp
 
 ENTRYPOINT ["snmptrapd", "-f", "-Lf", "/var/log/snmp/trap.log", \
             "-c", "/etc/snmp/snmptrapd.conf", "--disableAuthorization=yes", \
+            "-On", \
             "udp:0.0.0.0:162"]

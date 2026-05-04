@@ -101,8 +101,17 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
-      - name: docker version
-        run: docker --version && docker compose version
+      - name: configure docker for source-IP preservation
+        # Disable docker's userland UDP proxy so packets sent to the host
+        # bind preserve their L3 source IP through the bridge into the
+        # container. With the proxy enabled, snmptrapd inside the container
+        # sees `src=0.0.0.0` for proxied UDP and the spoofed v2c test cannot
+        # observe `--src-addr`'s effect at L3. Routing via iptables NAT
+        # preserves the source.
+        run: |
+          echo '{"userland-proxy": false}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+          docker --version && docker compose version
       - name: build integration test binaries (no run)
         # Compile up-front so the next step can `setcap` the resulting
         # binaries. `make integration-test` below then exec's them as a
