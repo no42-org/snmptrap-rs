@@ -1,0 +1,75 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  linux-musl:
+    name: linux-musl-${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - name: install rust toolchain with musl target
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+      - name: install musl-tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc  # v2.9.1
+      - name: build
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: stage artifact
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/snmptrap-rs dist/snmptrap-rs-${{ matrix.target }}
+          (cd dist && sha256sum snmptrap-rs-${{ matrix.target }} > snmptrap-rs-${{ matrix.target }}.sha256)
+      - name: upload to release
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
+        with:
+          files: |
+            dist/snmptrap-rs-${{ matrix.target }}
+            dist/snmptrap-rs-${{ matrix.target }}.sha256
+
+  macos:
+    name: macos-${{ matrix.target }}
+    runs-on: macos-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - name: install rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc  # v2.9.1
+      - name: build
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: stage artifact
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/snmptrap-rs dist/snmptrap-rs-${{ matrix.target }}
+          shasum -a 256 dist/snmptrap-rs-${{ matrix.target }} > dist/snmptrap-rs-${{ matrix.target }}.sha256
+      - name: upload to release (best-effort)
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
+        with:
+          files: |
+            dist/snmptrap-rs-${{ matrix.target }}
+            dist/snmptrap-rs-${{ matrix.target }}.sha256
