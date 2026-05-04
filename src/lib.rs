@@ -142,13 +142,12 @@ fn parse_uptime_or_default(s: &str) -> Result<u32, Error> {
     if s.is_empty() {
         return helpers::host_uptime_centiseconds().map_err(Error::from);
     }
-    s.parse::<u32>().map_err(|e: std::num::ParseIntError| {
-        Error::Usage(format!("invalid uptime '{s}': {e}"))
-    })
+    s.parse::<u32>()
+        .map_err(|e: std::num::ParseIntError| Error::Usage(format!("invalid uptime '{s}': {e}")))
 }
 
 fn parse_trailing_varbinds(rest: &[String]) -> Result<Vec<(Vec<u32>, VarBindValue)>, Error> {
-    if rest.len() % 3 != 0 {
+    if !rest.len().is_multiple_of(3) {
         return Err(Error::Usage(format!(
             "trailing var-binds must come in OID TYPE VALUE triplets; got {} extra args",
             rest.len()

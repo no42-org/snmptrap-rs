@@ -107,7 +107,7 @@ fn parse_hex_string(raw: &str) -> Result<Vec<u8>, String> {
     if cleaned.is_empty() {
         return Ok(Vec::new());
     }
-    if cleaned.len() % 2 != 0 {
+    if !cleaned.len().is_multiple_of(2) {
         return Err(format!(
             "hex string '{}' has odd character count after stripping separators ({})",
             raw,
@@ -117,8 +117,8 @@ fn parse_hex_string(raw: &str) -> Result<Vec<u8>, String> {
     let mut out = Vec::with_capacity(cleaned.len() / 2);
     for chunk in cleaned.as_bytes().chunks(2) {
         let s = std::str::from_utf8(chunk).map_err(|e| e.to_string())?;
-        let byte = u8::from_str_radix(s, 16)
-            .map_err(|e| format!("non-hex character in '{raw}': {e}"))?;
+        let byte =
+            u8::from_str_radix(s, 16).map_err(|e| format!("non-hex character in '{raw}': {e}"))?;
         out.push(byte);
     }
     Ok(out)
