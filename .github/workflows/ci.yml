@@ -83,6 +83,44 @@ jobs:
           tool: cargo-deny
       - run: make license-audit
 
+  integration:
+    # Linux+Docker lane that exercises `tests/integration_snmptrapd.rs` end-to-end:
+    # the binary sends real traps to a `snmptrapd` running in a sibling
+    # container, and assertions parse the receiver's log output. Includes the
+    # spoofed-source tests by granting `CAP_NET_RAW` to the test + production
+    # binaries before running, so `has_raw_privileges()` returns true and the
+    # `--src-addr` paths actually execute (rather than skipping).
+    name: integration (Linux + Docker)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+      - name: install rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
+      - name: docker version
+        run: docker --version && docker compose version
+      - name: build integration test binaries (no run)
+        # Compile up-front so the next step can `setcap` the resulting
+        # binaries. `make integration-test` below then exec's them as a
+        # cache hit — no rebuild, caps preserved through exec.
+        run: cargo test --workspace --all-targets --features integration --no-run
+      - name: grant CAP_NET_RAW to test + production binaries
+        # `has_raw_privileges()` opens a raw socket from the test process to
+        # decide whether to skip the spoofed tests. Without caps it returns
+        # false and 2/5 tests skip. With caps the test exec's `target/debug/snmptrap-rs`
+        # which itself needs caps to actually emit the spoofed packet.
+        run: |
+          INTEG_BIN=$(ls -t target/debug/deps/integration_snmptrapd-* 2>/dev/null | grep -v '\.d$' | head -1)
+          test -n "$INTEG_BIN" -a -x "$INTEG_BIN" || { echo "could not find integration test binary" >&2; exit 1; }
+          sudo setcap cap_net_raw+ep "$INTEG_BIN"
+          sudo setcap cap_net_raw+ep target/debug/snmptrap-rs
+      - name: integration-test
+        run: make integration-test
+
   cargo-deny-probationary:
     # Decision 2 (resolved (c)): broaden cargo-deny to advisories + bans + sources
     # on a non-blocking probationary lane. Promote to a required gate (and fold
