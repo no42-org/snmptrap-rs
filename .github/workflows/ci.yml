@@ -28,8 +28,12 @@ jobs:
             experimental: true
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-      - name: install rust toolchain (rust-toolchain.toml)
-        run: rustup show
+      - name: install rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+          rustup default stable
+          rustc --version
+          rustfmt --version
       - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc  # v2.9.1
       - run: make lint
       - run: make test
@@ -43,8 +47,6 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - name: install build deps
         run: apk add --no-cache make musl-dev
-      - name: install pinned rust toolchain
-        run: rustup show
       - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc  # v2.9.1
       - run: make build
       - run: make test
