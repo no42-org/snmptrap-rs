@@ -70,21 +70,26 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add ${{ matrix.target }}
-      - name: install musl-tools
+      - name: install host musl-tools (x86_64 leg)
+        # The host runner is x86_64; `musl-tools` provides `musl-gcc` for
+        # native musl linking. The aarch64 leg uses the proper musl cross-
+        # toolchain installed below — a glibc-flavored cross gcc would link
+        # against glibc symbols, which works for pure-Rust deps but breaks
+        # the moment a `*-sys` crate compiles C code into the dep graph.
+        if: matrix.target == 'x86_64-unknown-linux-musl'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - name: install aarch64 cross-linker
-        # The host's `/usr/bin/ld` is x86_64-only and rejects aarch64 ELF.
-        # `gcc-aarch64-linux-gnu` ships an aarch64-aware ld via its driver;
-        # Rust supplies the musl libc via `--target=aarch64-unknown-linux-musl`,
-        # so a glibc-flavored cross gcc as a *linker driver* is sufficient.
+      - name: install aarch64-musl cross-toolchain
+        # Real musl cross-toolchain — sets `CC_aarch64_unknown_linux_musl`,
+        # `CXX_aarch64_unknown_linux_musl`, `AR_aarch64_unknown_linux_musl`,
+        # `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER`, and adds the
+        # toolchain binaries to PATH. Lets `cc-rs`-driven `*-sys` crates
+        # compile C code into proper aarch64-musl objects.
         if: matrix.target == 'aarch64-unknown-linux-musl'
-        run: sudo apt-get install -y gcc-aarch64-linux-gnu
+        uses: taiki-e/setup-cross-toolchain-action@129361238c06ff2cc1c4ca5c5d2217af441ffdf6  # v1.40.1
+        with:
+          target: aarch64-unknown-linux-musl
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
       - name: build (Make-driven, per design D9)
-        env:
-          # Only consulted when cargo is building the aarch64-musl target;
-          # ignored on the x86_64 leg.
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
         run: |
           case "${{ matrix.target }}" in
             x86_64-unknown-linux-musl) make release-x86 ;;
