@@ -6,25 +6,39 @@ use crate::cli::SnmpVersion;
 /// Write a structured pre-send debug header + xxd-style hex dump of `payload`
 /// to `out` (typically `io::stderr()`). Community is redacted in the header
 /// but the `payload` bytes are dumped verbatim.
+///
+/// `src` is `None` when the kernel will pick the source IP (no `--src-addr`).
+/// `src_port` is `None` when the kernel will pick an ephemeral port. The
+/// header renders these as the spec-mandated placeholders `<kernel-selected>`
+/// and `<ephemeral>` so the debug output reflects what is actually known
+/// at print time, not a probed prediction.
 pub fn print_pre_send_dump<W: Write>(
     out: &mut W,
     version: SnmpVersion,
     dst: SocketAddrV4,
-    src: Ipv4Addr,
-    src_port: u16,
+    src: Option<Ipv4Addr>,
+    src_port: Option<u16>,
     payload: &[u8],
 ) -> io::Result<()> {
     let v = match version {
         SnmpVersion::V1 => "1",
         SnmpVersion::V2c => "2c",
     };
+    let src_display: String = match src {
+        Some(ip) => ip.to_string(),
+        None => "<kernel-selected>".into(),
+    };
+    let src_port_display: String = match src_port {
+        Some(p) => p.to_string(),
+        None => "<ephemeral>".into(),
+    };
     writeln!(
         out,
         "[debug] snmp_version={} dst={} src={} src_port={} community=*** payload_bytes={}",
         v,
         dst,
-        src,
-        src_port,
+        src_display,
+        src_port_display,
         payload.len()
     )?;
     write_hex_dump(out, payload)
@@ -71,7 +85,15 @@ mod tests {
         let dst = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 50), 162);
         let src = Ipv4Addr::new(198, 51, 100, 42);
         let payload = b"\x30\x05hello";
-        print_pre_send_dump(&mut buf, SnmpVersion::V2c, dst, src, 49152, payload).unwrap();
+        print_pre_send_dump(
+            &mut buf,
+            SnmpVersion::V2c,
+            dst,
+            Some(src),
+            Some(49152),
+            payload,
+        )
+        .unwrap();
         let text = String::from_utf8(buf).unwrap();
         assert!(text.contains("snmp_version=2c"), "{}", text);
         assert!(text.contains("dst=192.0.2.50:162"), "{}", text);
@@ -82,6 +104,16 @@ mod tests {
         assert!(text.contains("30 05"), "{}", text);
         // ASCII column shows "hello"
         assert!(text.contains("hello"), "{}", text);
+    }
+
+    #[test]
+    fn header_uses_placeholders_when_src_unset() {
+        let mut buf = Vec::new();
+        let dst = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 50), 162);
+        print_pre_send_dump(&mut buf, SnmpVersion::V2c, dst, None, None, b"x").unwrap();
+        let text = String::from_utf8(buf).unwrap();
+        assert!(text.contains("src=<kernel-selected>"), "{}", text);
+        assert!(text.contains("src_port=<ephemeral>"), "{}", text);
     }
 
     #[test]

@@ -5,9 +5,32 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    # The rasn family (rasn, rasn-smi, rasn-snmp) moves in lock-step at the
+    # same minor version; bumping one without the others produces a
+    # non-buildable intermediate state.
+    groups:
+      rasn:
+        patterns:
+          - "rasn"
+          - "rasn-*"
+      patch-and-minor:
+        update-types:
+          - "patch"
+          - "minor"
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    groups:
+      patch-and-minor:
+        update-types:
+          - "patch"
+          - "minor"
+
+  - package-ecosystem: "docker"
+    directory: "/tests/docker"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5

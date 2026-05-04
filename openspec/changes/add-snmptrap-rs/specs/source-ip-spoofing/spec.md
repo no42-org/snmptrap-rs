@@ -21,14 +21,18 @@ When `--src-addr` is **absent**, the system SHALL use an ordinary unprivileged U
 When `--src-addr` is set, the system SHALL emit the trap via a raw IPv4 socket (`AF_INET`, `SOCK_RAW`, `IPPROTO_UDP` or `IPPROTO_RAW`) with the `IP_HDRINCL` socket option enabled, and SHALL construct the IPv4 header, UDP header, and SNMP payload in user space.
 
 The IPv4 header SHALL set:
+- Version = 4, IHL = 5, TTL = 64, Protocol = 17 (UDP)
 - Source address = value of `--src-addr`
 - Destination address = resolved AGENT IPv4
-- Protocol = 17 (UDP)
-- Total length, header checksum, identification, TTL, and flags = computed/sensible defaults
+- `Total Length` (octets 2–3) and `Flags+Fragment Offset` (octets 6–7): the system SHALL write these in the byte order the kernel expects for the platform — **network byte order on Linux**, **host byte order on macOS / FreeBSD / OpenBSD / NetBSD / DragonFlyBSD** (per `raw(4)` BSD-derived semantics; the kernel byte-swaps before transmit). All other multi-byte fields (`Identification`, `Source Address`, `Destination Address`, `Header Checksum`) SHALL be in network byte order on every platform.
 - Don't-Fragment bit = set
+- Header checksum = RFC 1071 one's-complement sum over the constructed header
+- `Identification` = a fresh random 16-bit value **per send attempt** (RFC 6864) — retransmits SHALL NOT reuse the original packet's identification
+
+The system SHALL reject SNMP payloads whose total IPv4 datagram size (20-byte IP header + 8-byte UDP header + payload) would exceed `u16::MAX` (i.e. payload bytes > `65507`); silent truncation of the IPv4 `Total Length` and UDP `Length` fields via narrowing-cast wrap is not acceptable.
 
 The UDP header SHALL set:
-- Source port = `--src-port` if provided, else an ephemeral port
+- Source port = `--src-port` if provided, else an ephemeral port. The literal value `0` for `--src-port` is rejected by CLI validation (omit the flag for an ephemeral port).
 - Destination port = AGENT port (default 162)
 - Length = UDP header (8) + SNMP payload length
 - Checksum = computed over the UDP pseudo-header **using the spoofed source address**, the UDP header, and the SNMP payload (RFC 768 / RFC 1071). The checksum SHALL NOT be 0; if the computed value is 0 it SHALL be transmitted as `0xFFFF`.
@@ -43,6 +47,16 @@ The kernel egress interface and L2 (ARP / next-hop) resolution SHALL be left to 
 #### Scenario: Don't-Fragment bit is set
 - **WHEN** the binary emits a spoofed packet
 - **THEN** the IPv4 DF bit is 1 in the emitted datagram
+
+#### Scenario: Retries use a fresh IP `Identification`
+- **WHEN** the binary is invoked with `--src-addr X -r 2` and the underlying `send_to` fails on the first two attempts
+- **THEN** each of the three transmitted packets carries a different IPv4 `Identification` value
+- **AND** receivers seeing duplicate (src,dst,proto,id) tuples cannot reassemble a stale fragment from a stranded prior attempt
+
+#### Scenario: --src-port 0 is rejected
+- **WHEN** the user runs `snmptrap-rs --src-addr 198.51.100.42 --src-port 0 192.0.2.50 ...`
+- **THEN** the binary exits non-zero
+- **AND** stderr names `--src-port 0` as not allowed and instructs the user to omit the flag for an ephemeral port
 
 ### Requirement: SNMPv1 in-PDU agent-addr coherence with --src-addr
 
@@ -66,16 +80,24 @@ When `--src-addr` is set and the raw socket cannot be created or used because th
 
 1. States the feature requires raw IP socket capability,
 2. Names the platform-appropriate remediation (`setcap cap_net_raw+ep <binary>` on Linux; running as root on macOS),
-3. Includes the underlying syscall errno text in parentheses for debuggability,
-4. Refers the user to the project README section that documents the spoofing feature.
+3. Includes the underlying I/O error text (which itself contains the syscall errno) for debuggability.
 
-The system SHALL distinguish this case from unrelated socket failures (routing, address-in-use, MTU-related EMSGSIZE, etc.) and SHALL NOT print the privilege-remediation message for those cases.
+A pointer to the project README section MAY be included but is not required.
 
-#### Scenario: EPERM produces actionable error
-- **WHEN** an unprivileged user (no `CAP_NET_RAW`, not root) runs `snmptrap-rs --src-addr 198.51.100.42 ...`
-- **AND** the raw socket creation returns `EPERM`
+The system SHALL distinguish capability-denied errors (raw-socket-open `EPERM`/`EACCES`) from unrelated socket failures (routing, address-in-use, MTU-related EMSGSIZE, broadcast destinations without `SO_BROADCAST`, etc.). For send-time failures (after the raw socket has already been opened), `EPERM`/`EACCES` SHALL be classified as routing-class rather than capability-class — once the open succeeds the process demonstrably has the capability, so a subsequent permission error is a destination-class problem (e.g. broadcast/multicast without the corresponding sockopt).
+
+#### Scenario: EPERM at raw-socket open produces actionable error (Linux)
+- **WHEN** an unprivileged user (no `CAP_NET_RAW`, not root) runs `snmptrap-rs --src-addr 198.51.100.42 ...` on a Linux host
+- **AND** raw-socket creation returns `EPERM` or `EACCES`
 - **THEN** stderr contains the literal substring `setcap cap_net_raw+ep`
-- **AND** stderr contains `Operation not permitted`
+- **AND** stderr contains the OS strerror text for the underlying errno (`Operation not permitted` for `EPERM`, `Permission denied` for `EACCES`)
+- **AND** the binary exits non-zero
+
+#### Scenario: Privilege denial on macOS produces an actionable error
+- **WHEN** a non-root user runs `snmptrap-rs --src-addr 198.51.100.42 ...` on macOS
+- **AND** raw-socket creation fails with permission denied
+- **THEN** stderr contains the substring `sudo` or names root as the remediation
+- **AND** stderr does NOT contain `setcap cap_net_raw+ep` (irrelevant on macOS)
 - **AND** the binary exits non-zero
 
 #### Scenario: Routing failure does not blame capabilities
@@ -83,9 +105,17 @@ The system SHALL distinguish this case from unrelated socket failures (routing, 
 - **THEN** stderr does NOT contain the `setcap` remediation message
 - **AND** stderr names the routing condition (e.g. `Network is unreachable`)
 
+#### Scenario: Send-time EACCES (broadcast without SO_BROADCAST) is classified as routing
+- **WHEN** the binary is run with `--src-addr` and `CAP_NET_RAW` against a broadcast destination
+- **AND** the kernel returns `EACCES` from `send_to`
+- **THEN** stderr does NOT contain the `setcap` remediation message
+- **AND** the error is presented as a routing/send-class condition
+
 ### Requirement: Platform support boundary
 
-The system SHALL implement raw IPv4 + `IP_HDRINCL` source spoofing on **Linux** as the first-class target and on **macOS / BSD** as a best-effort target. On any other platform (notably Windows), the system SHALL exit non-zero with a clear "platform not supported for `--src-addr`" message when the flag is used; the unprivileged default code path SHOULD remain functional on those platforms.
+The system SHALL implement raw IPv4 + `IP_HDRINCL` source spoofing on **Linux** as the first-class target and on **macOS** as a best-effort target. The implementation gates the spoofed-send code path on `cfg(any(target_os = "linux", target_os = "macos"))`; on any other platform (FreeBSD, OpenBSD, NetBSD, DragonFlyBSD, Windows, etc.), the system SHALL exit non-zero with a clear "platform not supported for `--src-addr`" message when the flag is used. The unprivileged default code path (no `--src-addr`) SHOULD remain functional on those other platforms.
+
+(Note: the IPv4-header byte-order shim is `cfg`-gated for the wider BSD family because Linux/BSD divergence is the relevant axis for that pure function, but the actual `send_spoofed` entry point is gated only on Linux + macOS. Extending support to FreeBSD/OpenBSD/NetBSD/DragonFlyBSD is a follow-up change.)
 
 IPv6 source spoofing is explicitly out of scope for this change; passing an IPv6 literal to `--src-addr` SHALL be rejected with a stderr message identifying IPv6 spoofing as not supported.
 
