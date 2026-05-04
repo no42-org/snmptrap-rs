@@ -1,0 +1,9 @@
+services:
+  snmptrapd:
+    build:
+      context: ./tests/docker
+    container_name: snmptrap-rs-test-receiver
+    ports:
+      - "31620:162/udp"
+    volumes:
+      - ./tests/docker/log:/var/log/snmp

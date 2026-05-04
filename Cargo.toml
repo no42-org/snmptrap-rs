@@ -1,0 +1,42 @@
+[package]
+name = "snmptrap-rs"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Rust port of net-snmp snmptrap with optional L3 source-IP spoofing via raw IPv4 socket"
+repository = "https://github.com/no42-org/snmptrap-rs"
+keywords = ["snmp", "trap", "spoofing", "network-monitoring", "opennms"]
+categories = ["command-line-utilities", "network-programming"]
+readme = "README.md"
+
+[features]
+default = []
+# Enables Docker-backed integration tests. Activated via `make integration-test`.
+integration = []
+
+[[bin]]
+name = "snmptrap-rs"
+path = "src/main.rs"
+
+[dependencies]
+rasn = "0.28"
+rasn-smi = "0.28"
+rasn-snmp = "0.28"
+clap = { version = "4", features = ["derive"] }
+socket2 = { version = "0.6", features = ["all"] }
+libc = "0.2"
+anyhow = "1"
+thiserror = "2"
+rand = "0.9"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", default-features = false, features = ["net"] }
+
+[dev-dependencies]
+hex = "0.4"
+base64 = "0.22"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
