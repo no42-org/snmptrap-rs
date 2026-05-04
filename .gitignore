@@ -1,0 +1,21 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# AI tools
+_bmad-output/
+_bmad/
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+
+# Integration-test runtime artifacts
+tests/docker/log/
+
+# Local Claude Code config (not project-portable)
+.claude/
