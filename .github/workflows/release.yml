@@ -169,6 +169,11 @@ jobs:
       - name: provenance attestation
         # Decision 3 (resolved (a)): cheapest provenance signal, no key
         # management. Verifies via `gh attestation verify` post-release.
+        # `continue-on-error` because the underlying GitHub API requires
+        # either a public repo or a paid plan; for now the step degrades
+        # to a no-op on private repos, and provenance starts working
+        # automatically once the repo goes public.
+        continue-on-error: true
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4.1.0
         with:
           subject-path: |
