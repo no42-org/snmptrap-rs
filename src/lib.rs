@@ -13,7 +13,8 @@ pub use error::Error;
 
 use crate::cli::{Cli, SnmpVersion};
 use crate::pdu::{
-    DEFAULT_V1_ENTERPRISE_OID, V1Trap, V2cTrap, build_v1_trap, build_v2c_trap, fresh_request_id,
+    DEFAULT_V1_ENTERPRISE_OID, SNMP_TRAP_OID_OID, SYS_UPTIME_OID, V1Trap, V2cTrap, build_v1_trap,
+    build_v2c_trap, fresh_request_id,
 };
 use crate::varbind::{VarBindValue, parse_oid, parse_typed_value};
 
@@ -21,7 +22,7 @@ pub fn run() -> Result<(), Error> {
     let cli = Cli::parse_argv()?;
     let dst = cli.resolve_agent()?;
     let timeout = Duration::from_secs(cli.timeout.into());
-    let payload = build_payload(&cli)?;
+    let payload = build_payload(&cli, dst)?;
 
     if cli.debug_print_pdu {
         let mut stderr = std::io::stderr().lock();
@@ -43,9 +44,9 @@ pub fn run() -> Result<(), Error> {
     }
 }
 
-fn build_payload(cli: &Cli) -> Result<Vec<u8>, Error> {
+fn build_payload(cli: &Cli, dst: std::net::SocketAddrV4) -> Result<Vec<u8>, Error> {
     match cli.version {
-        SnmpVersion::V1 => build_v1_payload(cli),
+        SnmpVersion::V1 => build_v1_payload(cli, dst),
         SnmpVersion::V2c => build_v2c_payload(cli),
     }
 }
@@ -61,6 +62,26 @@ fn build_v2c_payload(cli: &Cli) -> Result<Vec<u8>, Error> {
     let uptime = parse_uptime_or_default(&args[0])?;
     let trap_oid = parse_oid(&args[1]).map_err(Error::Usage)?;
     let varbinds = parse_trailing_varbinds(&args[2..])?;
+    // The v2c trap PDU auto-prepends sysUpTime.0 and snmpTrapOID.0 from
+    // the dedicated `<UPTIME>` and `<TRAP-OID>` positionals; passing them
+    // again as trailing varbinds creates a duplicate that some receivers
+    // reject and others log as an oddity. Reject up-front with a hint.
+    for (oid, _) in &varbinds {
+        if oid.as_slice() == SYS_UPTIME_OID {
+            return Err(Error::Usage(
+                "sysUpTime.0 (1.3.6.1.2.1.1.3.0) is auto-prepended; do not pass it as a trailing varbind. \
+                 Use the <UPTIME> positional (or '' to substitute host uptime)."
+                    .into(),
+            ));
+        }
+        if oid.as_slice() == SNMP_TRAP_OID_OID {
+            return Err(Error::Usage(
+                "snmpTrapOID.0 (1.3.6.1.6.3.1.1.4.1.0) is auto-prepended; do not pass it as a trailing varbind. \
+                 Use the <TRAP-OID> positional."
+                    .into(),
+            ));
+        }
+    }
 
     let trap = V2cTrap {
         community: cli.community.as_bytes().to_vec(),
@@ -72,7 +93,7 @@ fn build_v2c_payload(cli: &Cli) -> Result<Vec<u8>, Error> {
     build_v2c_trap(&trap)
 }
 
-fn build_v1_payload(cli: &Cli) -> Result<Vec<u8>, Error> {
+fn build_v1_payload(cli: &Cli, dst: std::net::SocketAddrV4) -> Result<Vec<u8>, Error> {
     let args = &cli.trap_args;
     if args.len() < 5 {
         return Err(Error::Usage(
@@ -86,7 +107,6 @@ fn build_v1_payload(cli: &Cli) -> Result<Vec<u8>, Error> {
         parse_oid(&args[0]).map_err(Error::Usage)?
     };
 
-    let dst = cli.resolve_agent()?;
     let agent_addr = resolve_v1_agent_addr(&args[1], cli.src_addr_v4(), dst)?;
 
     let generic: i32 = args[2].parse().map_err(|e: std::num::ParseIntError| {
@@ -209,5 +229,53 @@ mod tests {
         // For loopback dest, egress is loopback.
         let r = resolve_v1_agent_addr("", None, dst()).unwrap();
         assert!(r.is_loopback(), "got {r}");
+    }
+
+    fn make_cli_v2c(trailing: &[&str]) -> Cli {
+        let mut argv = vec![
+            "snmptrap-rs",
+            "-v",
+            "2c",
+            "-c",
+            "public",
+            "127.0.0.1",
+            "12345",
+            "1.3.6.1.6.3.1.1.5.1",
+        ];
+        argv.extend_from_slice(trailing);
+        Cli::parse_from_iter(argv).unwrap()
+    }
+
+    #[test]
+    fn v2c_rejects_user_passed_sys_uptime_in_trailing_varbinds() {
+        let cli = make_cli_v2c(&["1.3.6.1.2.1.1.3.0", "t", "1000"]);
+        let err = build_v2c_payload(&cli).unwrap_err();
+        match err {
+            Error::Usage(msg) => assert!(
+                msg.contains("sysUpTime.0") && msg.contains("auto-prepended"),
+                "got {msg}"
+            ),
+            other => panic!("expected Usage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn v2c_rejects_user_passed_snmp_trap_oid_in_trailing_varbinds() {
+        let cli = make_cli_v2c(&["1.3.6.1.6.3.1.1.4.1.0", "o", "1.3.6.1.6.3.1.1.5.2"]);
+        let err = build_v2c_payload(&cli).unwrap_err();
+        match err {
+            Error::Usage(msg) => assert!(
+                msg.contains("snmpTrapOID.0") && msg.contains("auto-prepended"),
+                "got {msg}"
+            ),
+            other => panic!("expected Usage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn v2c_accepts_unrelated_trailing_varbinds() {
+        let cli = make_cli_v2c(&["1.3.6.1.4.1.8072.2.3.2.1", "i", "42"]);
+        let bytes = build_v2c_payload(&cli).expect("should encode");
+        assert!(!bytes.is_empty());
     }
 }

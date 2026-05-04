@@ -12,8 +12,9 @@ pub fn send(
     retries: u8,
     payload: &[u8],
 ) -> Result<(), Error> {
-    let bind: SocketAddr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, src_port.unwrap_or(0)).into();
-    let sock = UdpSocket::bind(bind).map_err(map_send_io)?;
+    let chosen_port = src_port.unwrap_or(0);
+    let bind: SocketAddr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, chosen_port).into();
+    let sock = UdpSocket::bind(bind).map_err(|e| classify_bind_io(e, src_port))?;
 
     let mut last_err: Option<std::io::Error> = None;
     let mut budget: i32 = retries as i32 + 1;
@@ -30,6 +31,29 @@ pub fn send(
     Err(map_send_io(last_err.unwrap_or_else(|| {
         std::io::Error::other("send_to failed without an OS error")
     })))
+}
+
+/// Classify a `bind(2)` failure on the unprivileged UDP socket. The
+/// `src_port` argument is the user's `--src-port` choice (or `None` for
+/// kernel-ephemeral) — used to render an actionable message that names
+/// which port hit the problem.
+fn classify_bind_io(err: std::io::Error, src_port: Option<u16>) -> Error {
+    let port_ctx = match src_port {
+        Some(p) => format!("--src-port {p}"),
+        None => "kernel-ephemeral source port".to_string(),
+    };
+    match err.raw_os_error() {
+        // EACCES on bind for a privileged port (<1024) means the user asked
+        // for a port that needs CAP_NET_BIND_SERVICE or root. Surface this
+        // as Usage rather than a generic Other so the message is actionable.
+        Some(libc::EACCES) if matches!(src_port, Some(p) if p < 1024) => Error::Usage(format!(
+            "{port_ctx} requires root or CAP_NET_BIND_SERVICE (port < 1024); bind failed: {err}"
+        )),
+        Some(libc::EADDRINUSE) => Error::Usage(format!(
+            "{port_ctx} is already in use by another process; bind failed: {err}"
+        )),
+        _ => Error::Other(err),
+    }
 }
 
 fn map_send_io(err: std::io::Error) -> Error {
