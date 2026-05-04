@@ -11,7 +11,7 @@
 ## 2. CI and license enforcement
 
 - [x] 2.1 Add GitHub Actions workflow `.github/workflows/ci.yml` running `make verify` on push/PR; pin every action to an immutable SHA with a trailing `# vX.Y.Z` comment
-- [x] 2.2 CI matrix: Ubuntu LTS (current and previous, e.g. 24.04 + 22.04) on the GitHub-hosted runner, plus an Alpine container job for musl coverage; `macos-latest` runs best-effort and does not gate merges
+- [x] 2.2 CI matrix: Ubuntu LTS (current, 24.04) on the GitHub-hosted runner, plus an Alpine container job for musl coverage; `macos-latest` runs best-effort and does not gate merges
 - [x] 2.3 CI step: `make license-audit` (invokes `cargo-deny check licenses`); fails the build on any license outside the allowlist
 - [x] 2.4 Add Dependabot config (`.github/dependabot.yml`) for cargo and github-actions ecosystems
 

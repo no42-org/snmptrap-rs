@@ -119,7 +119,7 @@ No auto-detection of "host owns this IP" to fall back to `bind()`. One flag, one
 
 ### D9: Build is driven by `make`, not `cargo` directly, in CI
 
-**Choice:** a `Makefile` exposes `build`, `verify`, `lint`, `test`, `integration-test`, `release` targets that wrap `cargo` invocations and the Docker-based receiver test. CI workflows call `make verify`, never `cargo` directly. CI runs on **Ubuntu LTS (current and previous)** plus an **Alpine container** for musl coverage; `macos-latest` is included as a best-effort lane that does not gate merges.
+**Choice:** a `Makefile` exposes `build`, `verify`, `lint`, `test`, `integration-test`, `release` targets that wrap `cargo` invocations and the Docker-based receiver test. CI workflows call `make verify`, never `cargo` directly. CI runs on **Ubuntu LTS (current)** plus an **Alpine container** for musl coverage; `macos-latest` is included as a best-effort lane that does not gate merges.
 
 **Rationale:** matches the convention from project guidelines; keeps local and CI invocations in sync; isolates CI from `cargo` flag churn. Alpine in CI catches musl-vs-glibc divergences early because the release artifact ships musl-static (D11).
 
