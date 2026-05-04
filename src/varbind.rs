@@ -15,8 +15,8 @@ pub enum VarBindValue {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
-    #[error("unknown type letter '{letter}' for OID '{oid}'")]
-    UnknownLetter { letter: char, oid: String },
+    #[error("unknown type letter '{letter}'")]
+    UnknownLetter { letter: char },
 
     #[error("invalid value for type '{letter}': {detail}")]
     BadValue { letter: char, detail: String },
@@ -71,10 +71,7 @@ pub fn parse_typed_value(letter: char, raw: &str) -> Result<VarBindValue, ParseE
                 letter,
                 detail: format!("expected unsigned 64-bit decimal, got '{raw}': {e}"),
             }),
-        other => Err(ParseError::UnknownLetter {
-            letter: other,
-            oid: String::new(),
-        }),
+        other => Err(ParseError::UnknownLetter { letter: other }),
     }
 }
 
@@ -96,16 +93,46 @@ pub fn parse_oid(s: &str) -> Result<Vec<u32>, String> {
     if parts.len() < 2 {
         return Err(format!("OID '{s}' has fewer than two arcs"));
     }
+    // ITU-T X.660: the first arc must be 0, 1, or 2; when the first arc is 0
+    // or 1, the second arc must be < 40 (these constraints are baked into BER's
+    // first-octet encoding `40*first + second`). Letting larger values through
+    // produces wire bytes that decode to a different OID than the user typed.
+    if parts[0] > 2 {
+        return Err(format!(
+            "OID '{s}' first arc must be 0, 1, or 2, got {}",
+            parts[0]
+        ));
+    }
+    if parts[0] < 2 && parts[1] >= 40 {
+        return Err(format!(
+            "OID '{s}' second arc must be < 40 when first arc is {}, got {}",
+            parts[0], parts[1]
+        ));
+    }
     Ok(parts)
 }
 
 fn parse_hex_string(raw: &str) -> Result<Vec<u8>, String> {
-    let cleaned: String = raw
+    // Strip a leading 0x/0X prefix on the trimmed input; common in copy-pasted
+    // hex output from `tcpdump -x`, `xxd`, etc.
+    let trimmed = raw.trim();
+    let body = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .unwrap_or(trimmed);
+    let cleaned: String = body
         .chars()
         .filter(|c| !c.is_whitespace() && *c != ':')
         .collect();
     if cleaned.is_empty() {
         return Ok(Vec::new());
+    }
+    // Reject any non-ASCII or non-hex character up front so the user gets a
+    // hex-shaped error rather than an opaque UTF-8 decode failure.
+    for c in cleaned.chars() {
+        if !c.is_ascii_hexdigit() {
+            return Err(format!("non-hex character '{c}' in '{raw}'"));
+        }
     }
     if !cleaned.len().is_multiple_of(2) {
         return Err(format!(
@@ -116,13 +143,20 @@ fn parse_hex_string(raw: &str) -> Result<Vec<u8>, String> {
     }
     let mut out = Vec::with_capacity(cleaned.len() / 2);
     for chunk in cleaned.as_bytes().chunks(2) {
-        let s = std::str::from_utf8(chunk).map_err(|e| e.to_string())?;
+        // Safe: we've already verified every char is ASCII hex.
+        let s = std::str::from_utf8(chunk).expect("ASCII-hex slice");
         let byte =
             u8::from_str_radix(s, 16).map_err(|e| format!("non-hex character in '{raw}': {e}"))?;
         out.push(byte);
     }
     Ok(out)
 }
+
+/// Hard cap on BITS bit position. Generous enough for any realistic SNMP
+/// BITS textual convention (RFC 2578 named-bits OBJECT-TYPEs are well under
+/// this), and prevents a CLI argument from triggering an unbounded `Vec`
+/// allocation.
+const MAX_BIT_POSITION: u32 = 65535;
 
 fn parse_bits(raw: &str) -> Result<Vec<u8>, String> {
     if raw.trim().is_empty() {
@@ -138,6 +172,11 @@ fn parse_bits(raw: &str) -> Result<Vec<u8>, String> {
         return Ok(Vec::new());
     }
     let max = *positions.iter().max().unwrap();
+    if max > MAX_BIT_POSITION {
+        return Err(format!(
+            "BITS position {max} exceeds maximum {MAX_BIT_POSITION}",
+        ));
+    }
     let bytes_needed = (max as usize / 8) + 1;
     let mut out = vec![0u8; bytes_needed];
     for p in positions {
@@ -283,8 +322,61 @@ mod tests {
     fn unknown_letter_names_letter() {
         let err = parse_typed_value('q', "anything").unwrap_err();
         match err {
-            ParseError::UnknownLetter { letter, .. } => assert_eq!(letter, 'q'),
+            ParseError::UnknownLetter { letter } => assert_eq!(letter, 'q'),
             other => panic!("expected UnknownLetter, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn oid_first_arc_above_two_rejected() {
+        let err = parse_oid("3.4.5").unwrap_err();
+        assert!(err.contains("first arc"), "got {err}");
+    }
+
+    #[test]
+    fn oid_second_arc_too_large_rejected() {
+        let err = parse_oid("1.40.5").unwrap_err();
+        assert!(err.contains("second arc"), "got {err}");
+        // 2.x is allowed to have second arc >= 40 (joint-iso-itu-t branch).
+        assert!(parse_oid("2.999.5").is_ok());
+    }
+
+    #[test]
+    fn bits_max_position_capped() {
+        let err = parse_typed_value('b', "65536").unwrap_err();
+        match err {
+            ParseError::BadValue {
+                letter: 'b',
+                detail,
+            } => {
+                assert!(
+                    detail.contains("65536") && detail.contains("65535"),
+                    "got {detail}"
+                );
+            }
+            other => panic!("expected BadValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hex_strips_leading_0x_prefix() {
+        let v = parse_typed_value('x', "0xdeadbeef").unwrap();
+        assert_eq!(v, VarBindValue::OctetString(vec![0xde, 0xad, 0xbe, 0xef]));
+        let v = parse_typed_value('x', "0XDEAD").unwrap();
+        assert_eq!(v, VarBindValue::OctetString(vec![0xde, 0xad]));
+    }
+
+    #[test]
+    fn hex_non_ascii_yields_hex_error() {
+        let err = parse_typed_value('x', "deñdbeef").unwrap_err();
+        match err {
+            ParseError::BadValue {
+                letter: 'x',
+                detail,
+            } => {
+                assert!(detail.contains("non-hex"), "got {detail}");
+            }
+            other => panic!("expected BadValue, got {other:?}"),
         }
     }
 }

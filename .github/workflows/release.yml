@@ -4,13 +4,56 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "tag to release (must already exist on main)"
+        required: true
 
+# Default to read-only; the publish job elevates to write+attestations.
 permissions:
-  contents: write
+  contents: read
+
+# Don't cancel an in-flight release if a re-tag arrives — partial publishing
+# is worse than a slightly delayed second run.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  validate-tag:
+    name: validate tag
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.tag.outputs.value }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: tag
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF##refs/tags/}"
+          fi
+          echo "value=$tag" >> "$GITHUB_OUTPUT"
+          # Strict semver (with optional pre-release suffix). Rejects vfoo, v1, v0..2 etc.
+          if ! echo "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$'; then
+            echo "::error::tag '$tag' is not strict semver (vMAJOR.MINOR.PATCH[-PRERELEASE])"
+            exit 1
+          fi
+          # Refuse to release a tag that isn't reachable from main — prevents
+          # a release being cut from a feature branch by accidental tagging.
+          if ! git merge-base --is-ancestor "$tag" origin/main; then
+            echo "::error::tag '$tag' is not on main"
+            exit 1
+          fi
+
   linux-musl:
     name: linux-musl-${{ matrix.target }}
+    needs: validate-tag
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -20,6 +63,8 @@ jobs:
           - aarch64-unknown-linux-musl
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
       - name: install rust toolchain
         run: |
           rustup toolchain install stable --profile minimal
@@ -28,24 +73,28 @@ jobs:
       - name: install musl-tools
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc  # v2.9.1
-      - name: build
-        run: cargo build --release --target ${{ matrix.target }}
+      - name: build (Make-driven, per design D9)
+        run: |
+          case "${{ matrix.target }}" in
+            x86_64-unknown-linux-musl) make release-x86 ;;
+            aarch64-unknown-linux-musl) make release-arm ;;
+          esac
       - name: stage artifact
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/snmptrap-rs dist/snmptrap-rs-${{ matrix.target }}
+          cp target/release-static/snmptrap-rs-${{ matrix.target }} dist/
           (cd dist && sha256sum snmptrap-rs-${{ matrix.target }} > snmptrap-rs-${{ matrix.target }}.sha256)
-      - name: upload to release
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          files: |
-            dist/snmptrap-rs-${{ matrix.target }}
-            dist/snmptrap-rs-${{ matrix.target }}.sha256
+          name: snmptrap-rs-${{ matrix.target }}
+          path: dist/
 
   macos:
+    # Best-effort per design D11: macOS failures are visible (no continue-on-error)
+    # but do not block the publish job (`publish.needs:` excludes this lane).
     name: macos-${{ matrix.target }}
+    needs: validate-tag
     runs-on: macos-latest
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -54,22 +103,75 @@ jobs:
           - aarch64-apple-darwin
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
       - name: install rust toolchain
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add ${{ matrix.target }}
       - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc  # v2.9.1
-      - name: build
-        run: cargo build --release --target ${{ matrix.target }}
+      - name: build (Make-driven)
+        run: |
+          case "${{ matrix.target }}" in
+            x86_64-apple-darwin) make release-macos-x86 ;;
+            aarch64-apple-darwin) make release-macos-arm ;;
+          esac
       - name: stage artifact
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/snmptrap-rs dist/snmptrap-rs-${{ matrix.target }}
-          shasum -a 256 dist/snmptrap-rs-${{ matrix.target }} > dist/snmptrap-rs-${{ matrix.target }}.sha256
-      - name: upload to release (best-effort)
+          cp target/release-static/snmptrap-rs-${{ matrix.target }} dist/
+          shasum -a 256 dist/snmptrap-rs-${{ matrix.target }} | awk '{print $1 "  snmptrap-rs-${{ matrix.target }}"}' > dist/snmptrap-rs-${{ matrix.target }}.sha256
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: snmptrap-rs-${{ matrix.target }}
+          path: dist/
+
+  publish:
+    name: publish release
+    # Linux-musl gates the release; macOS is best-effort and intentionally
+    # not in `needs:` — its artifacts are picked up by download-artifact iff
+    # the macOS legs succeeded, otherwise the release ships Linux-only.
+    needs: [validate-tag, linux-musl]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          path: dist/
+          merge-multiple: true
+      - name: aggregate SHA256SUMS
+        working-directory: dist
+        run: |
+          ls -la
+          # Build a single SHA256SUMS file alongside the per-binary .sha256 files.
+          : > SHA256SUMS
+          for f in snmptrap-rs-*; do
+            case "$f" in *.sha256) ;;
+              *) sha256sum "$f" >> SHA256SUMS ;;
+            esac
+          done
+          cat SHA256SUMS
+      - name: provenance attestation
+        # Decision 3 (resolved (a)): cheapest provenance signal, no key
+        # management. Verifies via `gh attestation verify` post-release.
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4.1.0
+        with:
+          subject-path: |
+            dist/snmptrap-rs-x86_64-unknown-linux-musl
+            dist/snmptrap-rs-aarch64-unknown-linux-musl
+            dist/snmptrap-rs-x86_64-apple-darwin
+            dist/snmptrap-rs-aarch64-apple-darwin
+      - name: publish release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
         with:
+          tag_name: ${{ needs.validate-tag.outputs.tag }}
           files: |
-            dist/snmptrap-rs-${{ matrix.target }}
-            dist/snmptrap-rs-${{ matrix.target }}.sha256
+            dist/snmptrap-rs-*
+            dist/SHA256SUMS
+          fail_on_unmatched_files: false
+          # Explicit so re-cutting a release on the same tag is deterministic.
+          overwrite_files: true

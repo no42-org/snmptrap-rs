@@ -24,17 +24,13 @@ pub fn run() -> Result<(), Error> {
     let payload = build_payload(&cli)?;
 
     if cli.debug_print_pdu {
-        let src_for_dump = cli
-            .src_addr_v4()
-            .or_else(|| helpers::egress_ipv4_for(dst).ok())
-            .unwrap_or(Ipv4Addr::UNSPECIFIED);
         let mut stderr = std::io::stderr().lock();
         let _ = debug::print_pre_send_dump(
             &mut stderr,
             cli.version,
             dst,
-            src_for_dump,
-            cli.src_port.unwrap_or(0),
+            cli.src_addr_v4(),
+            cli.src_port,
             &payload,
         );
     }
@@ -104,6 +100,11 @@ fn build_v1_payload(cli: &Cli) -> Result<Vec<u8>, Error> {
     let specific: i32 = args[3].parse().map_err(|e: std::num::ParseIntError| {
         Error::Usage(format!("invalid specific-trap '{}': {}", args[3], e))
     })?;
+    if specific < 0 {
+        return Err(Error::Usage(format!(
+            "specific-trap must be non-negative (RFC 1157), got {specific}"
+        )));
+    }
 
     let uptime = parse_uptime_or_default(&args[4])?;
     let varbinds = parse_trailing_varbinds(&args[5..])?;
@@ -156,11 +157,18 @@ fn parse_trailing_varbinds(rest: &[String]) -> Result<Vec<(Vec<u32>, VarBindValu
     let mut out = Vec::with_capacity(rest.len() / 3);
     for triplet in rest.chunks(3) {
         let oid = parse_oid(&triplet[0]).map_err(Error::Usage)?;
-        let letter = triplet[1].chars().next().ok_or_else(|| {
+        let mut chars = triplet[1].chars();
+        let letter = chars.next().ok_or_else(|| {
             Error::Usage(format!("type letter for OID '{}' is empty", triplet[0]))
         })?;
+        if chars.next().is_some() {
+            return Err(Error::Usage(format!(
+                "type letter for OID '{}' must be a single character, got '{}'",
+                triplet[0], triplet[1]
+            )));
+        }
         let value = parse_typed_value(letter, &triplet[2]).map_err(|e| match e {
-            varbind::ParseError::UnknownLetter { letter, .. } => Error::Usage(format!(
+            varbind::ParseError::UnknownLetter { letter } => Error::Usage(format!(
                 "unknown type letter '{}' after OID '{}'",
                 letter, triplet[0]
             )),

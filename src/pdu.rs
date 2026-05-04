@@ -155,8 +155,11 @@ fn make_v1_varbind(oid: &[u32], v: VarBindValue) -> Result<snmp_v1::VarBind, Err
             smi_v1::ObjectSyntax::Simple(smi_v1::SimpleSyntax::String(OctetString::from(bytes)))
         }
         VarBindValue::Null => smi_v1::ObjectSyntax::Simple(smi_v1::SimpleSyntax::Empty),
-        VarBindValue::Bits(bytes) => {
-            smi_v1::ObjectSyntax::Simple(smi_v1::SimpleSyntax::String(OctetString::from(bytes)))
+        VarBindValue::Bits(_) => {
+            return Err(Error::Encode(
+                "BITS (type 'b') is SMIv2-only; not representable in SNMPv1, use -v 2c instead"
+                    .into(),
+            ));
         }
         VarBindValue::Counter64(_) => {
             return Err(Error::Encode(
@@ -245,6 +248,27 @@ mod tests {
             smi_v1::NetworkAddress::Internet(ip) => {
                 assert_eq!(ip.0.as_ref(), &[10, 0, 0, 1]);
             }
+        }
+    }
+
+    #[test]
+    fn bits_in_v1_rejected() {
+        let t = V1Trap {
+            community: b"public".to_vec(),
+            enterprise: vec![1, 3, 6, 1, 4, 1, 3, 1, 1],
+            agent_addr: Ipv4Addr::new(10, 0, 0, 1),
+            generic: 6,
+            specific: 1,
+            uptime_centiseconds: 0,
+            varbinds: vec![(
+                vec![1, 3, 6, 1, 4, 1, 8072, 2, 3, 2, 1],
+                VarBindValue::Bits(vec![0x80]),
+            )],
+        };
+        let err = build_v1_trap(&t).unwrap_err();
+        match err {
+            Error::Encode(msg) => assert!(msg.contains("BITS"), "got {msg}"),
+            other => panic!("expected Encode, got {other:?}"),
         }
     }
 

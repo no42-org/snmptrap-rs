@@ -8,19 +8,23 @@ use crate::error::Error;
 pub fn send(
     dst: SocketAddrV4,
     src_port: Option<u16>,
-    timeout: Duration,
+    _timeout: Duration,
     retries: u8,
     payload: &[u8],
 ) -> Result<(), Error> {
     let bind: SocketAddr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, src_port.unwrap_or(0)).into();
     let sock = UdpSocket::bind(bind).map_err(map_send_io)?;
-    sock.set_write_timeout(Some(timeout)).map_err(map_send_io)?;
 
     let mut last_err: Option<std::io::Error> = None;
-    for _ in 0..=retries {
+    let mut budget: i32 = retries as i32 + 1;
+    while budget > 0 {
         match sock.send_to(payload, SocketAddr::V4(dst)) {
             Ok(_) => return Ok(()),
-            Err(e) => last_err = Some(e),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => {
+                last_err = Some(e);
+                budget -= 1;
+            }
         }
     }
     Err(map_send_io(last_err.unwrap_or_else(|| {

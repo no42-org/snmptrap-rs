@@ -17,5 +17,8 @@ _bmad/
 # Integration-test runtime artifacts
 tests/docker/log/
 
+# Release-pipeline staging
+dist/
+
 # Local Claude Code config (not project-portable)
 .claude/

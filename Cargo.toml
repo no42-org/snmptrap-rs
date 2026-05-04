@@ -2,6 +2,10 @@
 name = "snmptrap-rs"
 version = "0.1.0"
 edition = "2024"
+# Floor pinned to the rustc that contains every stable feature the source uses
+# (e.g. `usize::is_multiple_of` stabilized in 1.87). Bump together with any
+# new stdlib API adoption.
+rust-version = "1.87"
 license = "MIT"
 description = "Rust port of net-snmp snmptrap with optional L3 source-IP spoofing via raw IPv4 socket"
 repository = "https://github.com/no42-org/snmptrap-rs"
@@ -37,6 +41,8 @@ hex = "0.4"
 base64 = "0.22"
 
 [profile.release]
-lto = "thin"
+# `fat` LTO matches `codegen-units = 1`; `thin` would reintroduce parallelism
+# that one-codegen-unit deliberately disables.
+lto = "fat"
 codegen-units = 1
 strip = "symbols"
