@@ -19,6 +19,21 @@ When `--src-addr` is **absent**, the system SHALL use an ordinary unprivileged U
 - **THEN** the binary opens an ordinary UDP socket (no raw socket is created)
 - **AND** no `CAP_NET_RAW` is required
 
+### Requirement: --src-addr applies to trap PDUs only
+
+The `--src-addr` capability SHALL apply to SNMP trap PDUs only (v1 Trap-PDU and v2c SNMPv2-Trap PDU). InformRequest PDUs (v2c or v3) are excluded from `--src-addr` by design; this exclusion is a permanent design boundary, not a scope cut to be revisited.
+
+Rationale: An InformRequest expects a Response from the receiver, addressed to the request's source IP. With `--src-addr` set, that Response is destined for the spoofed address — not for this host — and either routes elsewhere or is dropped at network filters (BCP38, cloud virtual NICs, vSwitch port-security). Capturing such Responses would require raw L2 receive (AF_PACKET on Linux, `/dev/bpf*` on macOS), per-OS capability divergence beyond `CAP_NET_RAW`, and same-L2 placement of the spoofer relative to the receiver — all out of scope for this CLI's purpose as a single-binary spoofed-emit tool, not a network test harness.
+
+When this binary implements inform-PDU emission, the implementation SHALL reject any invocation combining `--src-addr` with an inform-emission mode at CLI parse time, before any socket is opened, with a stderr message stating that `--src-addr` applies to trap PDUs only. The error SHALL NOT suggest installing capabilities, changing privileges, or otherwise circumventing the constraint — it is a design boundary, not a permissions issue.
+
+#### Scenario: --src-addr is rejected with inform-PDU emission
+- **WHEN** the binary supports inform-PDU emission
+- **AND** the user combines `--src-addr <IPv4>` with any inform-emission mode (e.g. `-Ci`, or invocation as `snmpinform`)
+- **THEN** the binary exits non-zero before opening any socket
+- **AND** stderr names `--src-addr` as supported only for trap PDUs
+- **AND** stderr does NOT contain the `setcap` remediation string or other capability/privilege guidance
+
 ### Requirement: Raw IPv4 transport via IP_HDRINCL
 
 When `--src-addr` is set, the system SHALL emit the trap via a raw IPv4 socket (`AF_INET`, `SOCK_RAW`, `IPPROTO_UDP` or `IPPROTO_RAW`) with the `IP_HDRINCL` socket option enabled, and SHALL construct the IPv4 header, UDP header, and SNMP payload in user space.

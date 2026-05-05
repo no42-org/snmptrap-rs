@@ -13,7 +13,7 @@ The executable SHALL accept:
 - `-c <COMMUNITY>` — community string. Required for v1 and v2c. Empty community SHALL be rejected.
 - `-r <RETRIES>` — retry count for transport-level resends. Default 0 for traps.
 - `-t <TIMEOUT>` — accepted for Net-SNMP CLI compatibility. Trap PDUs are unconfirmed (no peer ack to time out against), so `-t` SHALL have no observable effect on trap emission; the value is parsed and validated (must be > 0) but not honored. Reserved for future inform-PDU support.
-- `--src-addr <IPv4>` — see `source-ip-spoofing` capability.
+- `--src-addr <IPv4>` — see `source-ip-spoofing` capability. Applies to trap PDUs only; combining `--src-addr` with inform-PDU emission is permanently unsupported by design (see the `Requirement: --src-addr applies to trap PDUs only` clause in the `source-ip-spoofing` spec).
 - `--src-port <PORT>` — UDP source port; default ephemeral. The literal value `0` SHALL be rejected (omit the flag for an ephemeral port).
 - `--debug-print-pdu` — see `Debug hex dump of emitted PDU` requirement.
 - `--binary-version` — see `Binary version flag` requirement.
