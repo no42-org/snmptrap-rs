@@ -5,6 +5,7 @@ Cargo.lock.bak
 # AI tools
 _bmad-output/
 _bmad/
+openspec/
 
 # IDE
 .vscode/
