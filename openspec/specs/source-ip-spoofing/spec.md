@@ -147,3 +147,38 @@ IPv6 source spoofing is explicitly out of scope for this change; passing an IPv6
 - **THEN** the binary exits non-zero
 - **AND** stderr identifies the platform as unsupported for `--src-addr`
 
+### Requirement: SNMPv3 in-USM engine-ID coherence with --src-addr
+
+When `-v 3` is selected and `--src-addr <X>` is set and `-E <ENGINE-ID>` is **not** set, the system SHALL populate the SNMPv3 message's `authoritativeEngineID` field with an engine-ID derived from `X` per RFC 3411 §5 format 1 (IPv4):
+
+```
+Octets 0..3:  0x80 0x00 0xF0 0x45    (IANA PEN 61509 with high bit on octet 0)
+Octet 4:      0x01                    (RFC 3411 format selector for IPv4)
+Octets 5..8:  X encoded big-endian   (4 bytes)
+Total:        9 octets
+```
+
+This is the v3 analogue of the v1 `agent-addr` coherence rule (see *SNMPv1 in-PDU agent-addr coherence with --src-addr* requirement) — when the user spoofs the L3 source, the in-USM device identity defaults to encoding the spoofed address so that L3 source and USM identity agree without further user input.
+
+When the user passes `-E <ENGINE-ID>` together with `--src-addr X`, the system SHALL use `-E` verbatim as the authoritative engine-ID, even if it does not encode `X`. This permits intentional decoupling for advanced testing.
+
+The `--src-addr` + inform-PDU rejection (see *--src-addr applies to trap PDUs only* requirement) covers v3 informs by inheritance: regardless of SNMP version, combining `--src-addr` with an inform-PDU emission mode SHALL be rejected at CLI parse time.
+
+#### Scenario: Empty -E with --src-addr inherits via format 1
+- **WHEN** the user runs `snmptrap-rs -v 3 -u testuser -l noAuthNoPriv --src-addr 198.51.100.42 192.0.2.50 '' 1.3.6.1.6.3.1.1.5.1`
+- **AND** the user does not pass `-E`
+- **THEN** the emitted message's `authoritativeEngineID` equals `0x80 0x00 0xF0 0x45 0x01 0xC6 0x33 0x64 0x2A` (9 bytes)
+- **AND** the L3 source address of the datagram is `198.51.100.42`
+
+#### Scenario: Explicit -E overrides the IPv4-derived default
+- **WHEN** the user runs `snmptrap-rs -v 3 -u testuser -l noAuthNoPriv --src-addr 198.51.100.42 -E 80001fa0500102 192.0.2.50 '' 1.3.6.1.6.3.1.1.5.1`
+- **THEN** the emitted message's `authoritativeEngineID` is the user-supplied value
+- **AND** the L3 source address of the datagram is still `198.51.100.42`
+
+#### Scenario: --src-addr + v3 inform is rejected (inherits the trap-only rule)
+- **WHEN** the binary supports v3 inform-PDU emission (in a future change)
+- **AND** the user combines `--src-addr <IPv4>` with v3 inform-emission mode (e.g. `-v 3 -Ci ...`)
+- **THEN** the binary exits non-zero before opening any socket
+- **AND** stderr names `--src-addr` as supported only for trap PDUs
+- **AND** stderr does NOT contain the `setcap` remediation string or other capability/privilege guidance
+

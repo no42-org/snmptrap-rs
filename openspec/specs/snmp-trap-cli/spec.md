@@ -9,8 +9,8 @@ The system SHALL provide a `snmptrap-rs` executable whose argument grammar is a 
 
 The executable SHALL accept:
 
-- `-v {1|2c}` — SNMP version selector. Required.
-- `-c <COMMUNITY>` — community string. Required for v1 and v2c. Empty community SHALL be rejected.
+- `-v {1|2c|3}` — SNMP version selector. Required.
+- `-c <COMMUNITY>` — community string. Required for `-v 1` and `-v 2c`; empty community SHALL be rejected. Silently ignored for `-v 3` (matches Net-SNMP behavior; community is not used in USM).
 - `-r <RETRIES>` — retry count for transport-level resends. Default 0 for traps.
 - `-t <TIMEOUT>` — accepted for Net-SNMP CLI compatibility. Trap PDUs are unconfirmed (no peer ack to time out against), so `-t` SHALL have no observable effect on trap emission; the value is parsed and validated (must be > 0) but not honored. Reserved for future inform-PDU support.
 - `--src-addr <IPv4>` — see `source-ip-spoofing` capability. Applies to trap PDUs only; combining `--src-addr` with inform-PDU emission is permanently unsupported by design (see the `Requirement: --src-addr applies to trap PDUs only` clause in the `source-ip-spoofing` spec).
@@ -20,13 +20,27 @@ The executable SHALL accept:
 - A trailing positional `AGENT` specifying the destination, in `host`, `host:port`, or `udp:host:port` form. Default port is 162. Bracketed-IPv6 forms (`[::1]`, `[::1]:162`) and bare-IPv6 literals (`2001:db8::1`) SHALL be rejected (only IPv4 destinations are supported).
 - Trap-shape positionals as defined per version below.
 
+When `-v 3` is selected, the executable SHALL additionally accept the SNMPv3-specific flags (see the *SNMPv3 USM security parameters* and *SNMPv3 engine-ID handling* requirements):
+
+- `-l <noAuthNoPriv|authNoPriv|authPriv>` — security level. Default `noAuthNoPriv` if omitted (matches Net-SNMP).
+- `-u <USER>` — USM user name. Required when `-v 3`.
+- `-a <SHA|SHA-224|SHA-256|SHA-384|SHA-512>` — auth protocol. Required when `-l` is `authNoPriv` or `authPriv`.
+- `-A <AUTH-PASS>` — auth password. Required when `-a` is set.
+- `-x <AES|AES-192|AES-256>` — priv protocol. Required when `-l` is `authPriv`.
+- `-X <PRIV-PASS>` — priv password. Required when `-x` is set.
+- `-e <ENGINE-ID>` — context engine ID; defaults to the authoritative engine-ID.
+- `-E <ENGINE-ID>` — authoritative engine-ID; defaults derived per the *SNMPv3 engine-ID handling* requirement.
+- `-n <CONTEXT-NAME>` — context name; default empty.
+
+When `-v 1` or `-v 2c` is selected, the executable SHALL reject any of the v3-specific flags listed above with a non-zero exit status and a usage message naming the offending flag and the version.
+
 The executable SHALL reject unknown flags with a non-zero exit status and a usage message naming the offending flag.
 
 OIDs in any positional argument SHALL be parsed as numeric (e.g. `1.3.6.1.6.3.1.1.4.1.0`). MIB-name resolution is out of scope. OID arc constraints from ITU-T X.660 SHALL be enforced: `arc[0]` SHALL be in `{0, 1, 2}`, and when `arc[0] < 2`, `arc[1]` SHALL be `< 40`. OIDs that violate these constraints SHALL be rejected with a usage error rather than encoded with garbage first-byte semantics.
 
 #### Scenario: Help output lists supported flags
 - **WHEN** the user runs `snmptrap-rs --help`
-- **THEN** the output enumerates `-v`, `-c`, `-r`, `-t`, `--src-addr`, `--src-port`, `--debug-print-pdu`, `--binary-version`, and the v1 and v2c positional forms
+- **THEN** the output enumerates `-v`, `-c`, `-r`, `-t`, `--src-addr`, `--src-port`, `--debug-print-pdu`, `--binary-version`, the v3 flags `-l`, `-u`, `-a`, `-A`, `-x`, `-X`, `-e`, `-E`, `-n`, and the v1, v2c, and v3 positional forms
 - **AND** the output is written to stdout (not stderr)
 - **AND** the exit status is 0
 
@@ -44,6 +58,17 @@ OIDs in any positional argument SHALL be parsed as numeric (e.g. `1.3.6.1.6.3.1.
 - **WHEN** the user runs `snmptrap-rs -v 2c -c public --not-a-flag 192.0.2.1`
 - **THEN** the binary exits non-zero
 - **AND** stderr names `--not-a-flag` as unrecognized
+
+#### Scenario: v3-specific flag with non-v3 version is rejected
+- **WHEN** the user runs `snmptrap-rs -v 2c -c public -u testuser 192.0.2.1 '' 1.3.6.1.6.3.1.1.5.1`
+- **THEN** the binary exits non-zero
+- **AND** stderr names `-u` as not valid with `-v 2c`
+
+#### Scenario: -c is silently ignored under -v 3
+- **WHEN** the user runs `snmptrap-rs -v 3 -c public -u testuser -l noAuthNoPriv 192.0.2.50 '' 1.3.6.1.6.3.1.1.5.1`
+- **THEN** the binary does not reject `-c`
+- **AND** the emitted v3 message contains no community string field
+- **AND** the emitted v3 message contains the user name `testuser` in `msgSecurityParameters`
 
 ### Requirement: SNMPv2c trap PDU emission
 
@@ -209,4 +234,158 @@ The bytes emitted by the binary for a given v1 or v2c invocation SHALL be ASN.1/
 - **WHEN** the same v2c invocation (fixed request-id, fixed uptime) is run through Net-SNMP `snmptrap` and `snmptrap-rs`
 - **THEN** the resulting UDP payloads decode to the same SNMP message structure
 - **AND** the BER encodings of the SNMPv2-Trap PDUs are byte-identical
+
+### Requirement: SNMPv3 trap PDU emission
+
+When invoked with `-v 3`, the system SHALL construct and emit an SNMPv3 message (RFC 3412) carrying a scopedPDU whose payload is an SNMPv2-Trap PDU (RFC 3416), with the positional grammar:
+
+```
+snmptrap-rs -v 3 -u <USER> [v3 flags] <AGENT> <UPTIME> <TRAP-OID> [OID TYPE VALUE]...
+```
+
+- `<UPTIME>`, `<TRAP-OID>`, and the trailing `OID TYPE VALUE` triplets follow the same semantics as `-v 2c` (see *SNMPv2c trap PDU emission* requirement). The inner trap PDU SHALL be byte-identical to the v2c PDU that would be produced for the same positional arguments — only the outer message wrapper differs.
+- `msgVersion` SHALL be `3`.
+- `msgID` SHALL be a fresh random 32-bit integer per outbound message.
+- `msgSecurityModel` SHALL be `3` (USM).
+- `msgFlags` SHALL encode the security level using the bit layout from RFC 3412 §6.4 (bit 0 = auth, bit 1 = priv, bit 2 = reportable): `0b000` (`0x00`) for `noAuthNoPriv`, `0b001` (`0x01`) for `authNoPriv`, `0b011` (`0x03`) for `authPriv`. The reportable bit (bit 2) SHALL be **zero** for trap PDUs — RFC 3412 §6.4 makes this SHOULD-zero for unconfirmed PDUs, Net-SNMP's `snmptrap -v 3` emits zero, and Net-SNMP's `snmptrapd` silently drops messages where the reportable bit is set on a trap.
+- `msgMaxSize` SHALL be `65507` (UDP maximum payload).
+- The `scopedPDU.contextEngineID` SHALL default to the authoritative engine-ID (per the *SNMPv3 engine-ID handling* requirement); user-supplied `-e CONTEXT-ENGINE-ID` overrides.
+- The `scopedPDU.contextName` SHALL default to an empty `OCTET STRING`; `-n NAME` overrides.
+
+#### Scenario: Minimal v3 noAuthNoPriv trap encodes mandatory varbinds
+- **WHEN** the user runs `snmptrap-rs -v 3 -u testuser -l noAuthNoPriv 127.0.0.1 '' 1.3.6.1.6.3.1.1.5.1`
+- **THEN** the emitted UDP datagram is a valid SNMPv3 message
+- **AND** the inner scopedPDU is an SNMPv2-Trap PDU
+- **AND** the first varbind is `sysUpTime.0` of type TimeTicks
+- **AND** the second varbind is `snmpTrapOID.0` of type OBJECT IDENTIFIER with value `1.3.6.1.6.3.1.1.5.1`
+
+#### Scenario: v3 trap PDU is byte-identical to v2c trap PDU for same positionals
+- **WHEN** the user runs the same positional arguments with `-v 2c -c public ...` and with `-v 3 -u testuser -l noAuthNoPriv ...`
+- **THEN** the inner v2-Trap PDU bytes (the scopedPDU.data field of the v3 message) are byte-identical to the PDU bytes of the v2c message, modulo the request-id (which is randomized per message)
+
+#### Scenario: msgFlags encodes security level
+- **WHEN** the user runs with `-l noAuthNoPriv`
+- **THEN** msgFlags has bits set: reportable=0, auth=0, priv=0 (byte = 0x00)
+- **WHEN** the user runs with `-l authNoPriv`
+- **THEN** msgFlags has bits set: reportable=0, auth=1, priv=0 (byte = 0x01)
+- **WHEN** the user runs with `-l authPriv`
+- **THEN** msgFlags has bits set: reportable=0, auth=1, priv=1 (byte = 0x03)
+
+### Requirement: SNMPv3 USM security parameters and password localization
+
+When `-v 3` is selected, the system SHALL populate the `msgSecurityParameters` field with USM-specific data per RFC 3414:
+
+- `authoritativeEngineID` — the value resolved per the *SNMPv3 engine-ID handling* requirement.
+- `authoritativeEngineBoots` — SHALL be `1` for every invocation. The system SHALL NOT persist a boot counter across invocations.
+- `authoritativeEngineTime` — SHALL be the integer count of seconds elapsed since the process started.
+- `userName` — the value passed via `-u USER`.
+- `authenticationParameters`:
+  - When `-l` is `noAuthNoPriv`: an empty `OCTET STRING` (zero bytes).
+  - When `-l` is `authNoPriv` or `authPriv`: the truncated HMAC tag computed per RFC 7860 over the entire serialized message with `authenticationParameters` set to a zero-filled placeholder of the same length as the eventual tag, then spliced in. Tag length per protocol: SHA-1 → 12 bytes; SHA-224 → 16; SHA-256 → 24; SHA-384 → 32; SHA-512 → 48.
+- `privacyParameters`:
+  - When `-l` is `noAuthNoPriv` or `authNoPriv`: an empty `OCTET STRING`.
+  - When `-l` is `authPriv`: an 8-byte salt drawn fresh from the RNG per outbound message. The salt is the second half of the 16-byte AES-CFB IV; the first half is `authoritativeEngineBoots || authoritativeEngineTime` (4 bytes each, big-endian) per RFC 3826 §3.
+
+When `-l` requires authentication or encryption, the system SHALL derive auth and priv keys from the user-supplied passwords (`-A`, `-X`) per the RFC 3414 §A.2 password-to-key algorithm extended for the SHA-2 family per RFC 7860 §3.4. The KDF SHALL localize the digest against the authoritative engine-ID by hashing `digest || engineID || digest` with the auth protocol's hash function. The derived key length SHALL match the auth protocol's hash output (20/28/32/48/64 bytes for SHA-1/224/256/384/512).
+
+For priv keys, the localized key SHALL be truncated or extended to match the AES variant's required key length (16/24/32 bytes for AES-128/192/256). Truncation rule per RFC 3826: the first N bytes of the localized key are used directly.
+
+#### Scenario: authPriv produces an HMAC tag of the protocol's defined length
+- **WHEN** the user runs with `-l authPriv -a SHA-256 -A 'authpassword1234' -x AES -X 'privpassword1234'`
+- **THEN** the `authenticationParameters` field of the emitted message is exactly 24 bytes (SHA-256 truncated tag length per RFC 7860)
+- **AND** re-computing HMAC-SHA-256 over the message with the placeholder reproduces the same 24 bytes
+
+#### Scenario: privacyParameters salt is per-message random
+- **WHEN** the user runs the same authPriv invocation twice
+- **THEN** the `privacyParameters` field differs between the two emitted messages
+- **AND** decrypting each message with the priv key + its own salt yields the same plaintext scopedPDU
+
+#### Scenario: noAuthNoPriv has empty auth and priv parameters
+- **WHEN** the user runs with `-l noAuthNoPriv`
+- **THEN** the `authenticationParameters` field is an empty OCTET STRING
+- **AND** the `privacyParameters` field is an empty OCTET STRING
+
+#### Scenario: engineBoots is always 1 per invocation
+- **WHEN** the user runs the same v3 invocation twice in quick succession
+- **THEN** both emitted messages carry `authoritativeEngineBoots = 1`
+- **AND** the `authoritativeEngineTime` of the second is greater than or equal to that of the first
+
+### Requirement: SNMPv3 engine-ID handling
+
+When `-v 3` is selected, the system SHALL resolve the authoritative engine-ID via this cascade:
+
+1. If the user passed `-E <ENGINE-ID>`, use that value verbatim. The user-supplied value SHALL be parsed as either a hexadecimal byte string (with or without `0x` prefix; whitespace and `:` separators allowed) or as raw bytes; on parse failure, the binary SHALL exit non-zero with a usage error naming the offending value.
+2. Otherwise, if `--src-addr <X>` is set, the authoritative engine-ID SHALL be constructed per RFC 3411 §5 format 1 (IPv4):
+   - Octets 0–3: `0x80 0x00 0xF0 0x45` (IANA Private Enterprise Number 61509 with the high bit set on octet 0).
+   - Octet 4: `0x01` (format selector for IPv4).
+   - Octets 5–8: `X` encoded big-endian (4 bytes).
+   - Total length: 9 octets.
+3. Otherwise, if the host has a usable primary network interface, the authoritative engine-ID SHALL be constructed per RFC 3411 §5 format 3 (MAC):
+   - Octets 0–3: `0x80 0x00 0xF0 0x45`.
+   - Octet 4: `0x03` (format selector for MAC).
+   - Octets 5–10: the 6-byte MAC address of the primary interface.
+   - Total length: 11 octets.
+4. Otherwise (no usable network interface), the authoritative engine-ID SHALL fall back to RFC 3411 §5 format 4 (text) with payload = the host's hostname truncated to 27 bytes:
+   - Octets 0–3: `0x80 0x00 0xF0 0x45`.
+   - Octet 4: `0x04` (format selector for text).
+   - Octets 5–N: hostname bytes (UTF-8, truncated to fit).
+
+The context engine-ID inside the scopedPDU SHALL default to the authoritative engine-ID. The user MAY override the context engine-ID independently via `-e <CONTEXT-ENGINE-ID>`; same parsing rules as `-E`.
+
+#### Scenario: Default engine-ID with --src-addr uses IPv4 format
+- **WHEN** the user runs `snmptrap-rs -v 3 -u testuser -l noAuthNoPriv --src-addr 198.51.100.42 192.0.2.50 '' 1.3.6.1.6.3.1.1.5.1`
+- **AND** `-E` is not set
+- **THEN** the `authoritativeEngineID` octets are `0x80 0x00 0xF0 0x45 0x01 0xC6 0x33 0x64 0x2A` (9 bytes total)
+
+#### Scenario: Default engine-ID without --src-addr uses MAC format
+- **WHEN** the user runs `snmptrap-rs -v 3 -u testuser -l noAuthNoPriv 192.0.2.50 '' 1.3.6.1.6.3.1.1.5.1`
+- **AND** `-E` is not set
+- **AND** `--src-addr` is not set
+- **AND** the host has a usable primary interface
+- **THEN** the `authoritativeEngineID` is 11 octets long
+- **AND** the first 4 octets are `0x80 0x00 0xF0 0x45`
+- **AND** octet 4 is `0x03`
+
+#### Scenario: User-supplied -E overrides the cascade
+- **WHEN** the user runs `... --src-addr 198.51.100.42 -E 80001fa0500102 ...`
+- **THEN** the `authoritativeEngineID` is the user-supplied value (parsed from hex)
+- **AND** the IPv4-derived default is NOT used
+
+#### Scenario: -E parse failure produces a usage error
+- **WHEN** the user passes `-E 'not-hex-or-bytes'`
+- **THEN** the binary exits non-zero
+- **AND** stderr names the offending value and the expected format
+
+#### Scenario: contextEngineID defaults to authoritativeEngineID
+- **WHEN** the user does not pass `-e`
+- **THEN** the scopedPDU's `contextEngineID` octets equal the message's `authoritativeEngineID` octets
+
+### Requirement: Legacy crypto rejection at CLI parse time
+
+The system SHALL reject the following legacy crypto algorithms at CLI parse time, before any socket is opened and before any crypto module is invoked:
+
+- `-a MD5` (HMAC-MD5, RFC 3414 default) — exit non-zero with stderr message naming HMAC-MD5 as not supported in this build and pointing at the SHA family as the modern replacement.
+- `-x DES` (DES-CBC, RFC 3414 default) — exit non-zero with stderr message naming DES-CBC as not supported in this build and pointing at AES, AES-192, or AES-256 as the modern replacement.
+- `-x 3DES` (3DES-CBC, Cisco extension) — exit non-zero with stderr message naming 3DES-CBC as not supported in this build and pointing at AES-256 as the modern replacement.
+
+The error messages SHALL NOT instruct the user to install additional capabilities, change privileges, or otherwise circumvent the rejection — these are deliberate scope cuts driven by 2026 cryptographic guidance, not transient implementation gaps.
+
+#### Scenario: -a MD5 rejected at parse
+- **WHEN** the user runs `snmptrap-rs -v 3 -u testuser -l authNoPriv -a MD5 -A 'pw' 192.0.2.50 ...`
+- **THEN** the binary exits non-zero
+- **AND** stderr names HMAC-MD5 as not supported
+- **AND** stderr suggests one of the SHA family
+- **AND** no socket is opened
+
+#### Scenario: -x DES rejected at parse
+- **WHEN** the user runs `snmptrap-rs -v 3 -u testuser -l authPriv -a SHA -A 'pw' -x DES -X 'pw' 192.0.2.50 ...`
+- **THEN** the binary exits non-zero
+- **AND** stderr names DES-CBC as not supported
+- **AND** stderr suggests AES, AES-192, or AES-256
+
+#### Scenario: -x 3DES rejected at parse
+- **WHEN** the user runs `snmptrap-rs -v 3 -u testuser -l authPriv -a SHA-256 -A 'pw' -x 3DES -X 'pw' 192.0.2.50 ...`
+- **THEN** the binary exits non-zero
+- **AND** stderr names 3DES-CBC as not supported
+- **AND** stderr suggests AES-256
 
