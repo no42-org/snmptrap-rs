@@ -3,10 +3,12 @@ use std::time::Duration;
 
 pub mod cli;
 pub mod debug;
+pub mod engine;
 pub mod error;
 pub mod helpers;
 pub mod pdu;
 pub mod transport;
+pub mod usm;
 pub mod varbind;
 
 pub use error::Error;
