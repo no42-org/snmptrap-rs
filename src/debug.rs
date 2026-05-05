@@ -23,6 +23,7 @@ pub fn print_pre_send_dump<W: Write>(
     let v = match version {
         SnmpVersion::V1 => "1",
         SnmpVersion::V2c => "2c",
+        SnmpVersion::V3 => "3",
     };
     let src_display: String = match src {
         Some(ip) => ip.to_string(),

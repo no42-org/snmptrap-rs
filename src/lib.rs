@@ -51,6 +51,13 @@ fn build_payload(cli: &Cli, dst: std::net::SocketAddrV4) -> Result<Vec<u8>, Erro
     match cli.version {
         SnmpVersion::V1 => build_v1_payload(cli, dst),
         SnmpVersion::V2c => build_v2c_payload(cli),
+        // Placeholder until the next commit wires v3 dispatch in. Adding
+        // SnmpVersion::V3 in this commit (CLI surface only) requires a
+        // match arm here to keep the build green.
+        SnmpVersion::V3 => Err(Error::Usage(
+            "internal: -v 3 dispatch lands in the next commit (this commit is the CLI surface only)"
+                .into(),
+        )),
     }
 }
 
