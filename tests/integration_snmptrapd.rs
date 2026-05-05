@@ -450,6 +450,137 @@ fn eperm_emits_setcap_remediation_on_linux() {
     );
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// SNMPv3 — end-to-end via snmptrapd USM
+//
+// These tests exercise the full v3 emission path (engine-ID + KDF +
+// HMAC-then-splice + AES-CFB) against a real Net-SNMP receiver. If any
+// piece of the wire format diverges, snmptrapd silently drops the message
+// — no log line appears — and `wait_for_log_line` times out. So the
+// presence of the user name in the log IS the wire-format-correctness
+// check end-to-end.
+//
+// All three tests use the same fixed authoritative engine-ID
+// `0x80001f88040102030405` (RFC 3411 §5 format 5, 10 bytes admin-defined).
+// snmptrapd.conf has matching `createUser -e <same-engine-id>` entries
+// so its key localization agrees with ours. Auth/priv passwords are
+// pinned to "authpassword1234" / "privpassword1234" (both 16 chars,
+// satisfying the RFC 3414 §11.2 ≥8-char floor).
+// ─────────────────────────────────────────────────────────────────────────
+
+const V3_TEST_ENGINE_ID_HEX: &str = "0x80001f88040102030405";
+
+#[test]
+#[ignore = "requires docker"]
+fn v3_noauthnopriv_trap_arrives_at_snmptrapd() {
+    let _guard = ComposeGuard::up();
+    let baseline = current_log_size();
+    run_binary(&[
+        "-v",
+        "3",
+        "-u",
+        "testNoAuth",
+        "-l",
+        "noAuthNoPriv",
+        "-E",
+        V3_TEST_ENGINE_ID_HEX,
+        &host_arg(),
+        "12345",
+        "1.3.6.1.6.3.1.1.5.1",
+    ]);
+    // %P for v3 expands to "USM,SNMP v3,user testNoAuth,secLevel ..." —
+    // the user name is the unique-to-v3-this-test token to grep on.
+    let line = wait_for_log_line(
+        baseline,
+        |l| l.contains("testNoAuth"),
+        Duration::from_secs(5),
+    )
+    .expect("v3 noAuthNoPriv trap not seen in log");
+    assert!(
+        line.contains("1.3.6.1.6.3.1.1.5.1") || line.contains("coldStart"),
+        "expected trap-OID (numeric or symbolic) in line: {line}"
+    );
+}
+
+#[test]
+#[ignore = "requires docker"]
+fn v3_authnopriv_sha256_trap_arrives_at_snmptrapd() {
+    let _guard = ComposeGuard::up();
+    let baseline = current_log_size();
+    run_binary(&[
+        "-v",
+        "3",
+        "-u",
+        "testAuth",
+        "-l",
+        "authNoPriv",
+        "-a",
+        "SHA-256",
+        "-A",
+        "authpassword1234",
+        "-E",
+        V3_TEST_ENGINE_ID_HEX,
+        &host_arg(),
+        "12345",
+        "1.3.6.1.6.3.1.1.5.1",
+    ]);
+    // If our HMAC-SHA-256 over the message bytes differs from snmptrapd's
+    // recompute (different key derivation, wrong placeholder zero-fill,
+    // off-by-one truncation, etc.), snmptrapd silently drops and the wait
+    // times out — that's the wire-format check.
+    let line = wait_for_log_line(baseline, |l| l.contains("testAuth"), Duration::from_secs(5))
+        .expect(
+            "v3 authNoPriv trap not seen — HMAC may have failed verification \
+         (SHA-256 KDF, message bytes, or auth-param truncation mismatch)",
+        );
+    assert!(
+        line.contains("1.3.6.1.6.3.1.1.5.1") || line.contains("coldStart"),
+        "expected trap-OID in line: {line}"
+    );
+}
+
+#[test]
+#[ignore = "requires docker"]
+fn v3_authpriv_sha256_aes128_trap_arrives_at_snmptrapd() {
+    let _guard = ComposeGuard::up();
+    let baseline = current_log_size();
+    run_binary(&[
+        "-v",
+        "3",
+        "-u",
+        "testPriv",
+        "-l",
+        "authPriv",
+        "-a",
+        "SHA-256",
+        "-A",
+        "authpassword1234",
+        "-x",
+        "AES",
+        "-X",
+        "privpassword1234",
+        "-E",
+        V3_TEST_ENGINE_ID_HEX,
+        &host_arg(),
+        "12345",
+        "1.3.6.1.6.3.1.1.5.1",
+    ]);
+    // Both AES-CFB-128 decryption and HMAC-SHA-256 verification must
+    // succeed for snmptrapd to log. AES IV layout (engineBoots(4) ||
+    // engineTime(4) || salt(8)), priv-key derivation (SHA-256 KDF
+    // truncated to 16 bytes), and the HMAC splice must all agree with
+    // snmptrapd's interpretation of RFC 3826 + RFC 7860.
+    let line = wait_for_log_line(baseline, |l| l.contains("testPriv"), Duration::from_secs(5))
+        .expect(
+            "v3 authPriv trap not seen — AES decrypt or HMAC may have failed \
+         (priv-key derivation, IV layout, or salt encoding mismatch)",
+        );
+    assert!(
+        line.contains("1.3.6.1.6.3.1.1.5.1") || line.contains("coldStart"),
+        "expected trap-OID in line: {line}"
+    );
+}
+
 #[test]
 #[ignore = "requires Linux AND CAP_NET_RAW AND `ip route add unreachable 192.0.2.0/24`"]
 fn routing_failure_does_not_blame_capabilities_linux() {
