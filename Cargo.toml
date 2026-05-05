@@ -35,11 +35,11 @@ rand = "0.10"
 # RustCrypto — SNMPv3 USM (RFC 3414 / 7860 / 3826). HMAC-SHA family +
 # AES-128/192/256-CFB only. HMAC-MD5 / DES / 3DES are rejected at CLI parse
 # time, so md-5 / des / 3des crates are intentionally absent.
-hmac = "0.12"
-sha1 = "0.10"
-sha2 = "0.10"
-aes = "0.8"
-cfb-mode = "0.8"
+hmac = "0.13"
+sha1 = "0.11"
+sha2 = "0.11"
+aes = "0.9"
+cfb-mode = "0.9"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", default-features = false, features = ["net"] }
