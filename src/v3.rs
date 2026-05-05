@@ -18,10 +18,12 @@
 //!      "replace authParams with zeros and recompute" gives the same input
 //!      we hashed, and HMAC verifies.
 //!
-//! The reportable bit in `msgFlags` is set on outbound traps to mirror
-//! Net-SNMP's `snmptrap -v 3` behavior (RFC 3412 §6.4 makes it SHOULD-zero
-//! for unconfirmed PDUs but receivers tolerate either; matching Net-SNMP
-//! eliminates needless interop variation).
+//! The reportable bit in `msgFlags` is intentionally **zero** for trap
+//! PDUs. RFC 3412 §6.4 makes it SHOULD-zero for unconfirmed PDUs (traps
+//! never receive a Report PDU back), and Net-SNMP's `snmptrapd` actively
+//! drops messages with reportable=1 on traps without a log line. Verified
+//! against Net-SNMP `snmptrap -v 3` byte capture: it emits 0x00 / 0x01 /
+//! 0x03 for noAuthNoPriv / authNoPriv / authPriv, never 0x04 / 0x05 / 0x07.
 
 use rasn::types::{Integer, OctetString};
 use rasn_snmp::{v2 as snmp_v2, v3 as snmp_v3};
@@ -38,7 +40,9 @@ const MSG_MAX_SIZE: u32 = 65507;
 
 const FLAG_AUTH: u8 = 0b001;
 const FLAG_PRIV: u8 = 0b010;
-const FLAG_REPORTABLE: u8 = 0b100;
+// Bit 2 (reportable) is intentionally not used: it MUST be zero for trap
+// PDUs per RFC 3412 §6.4, and snmptrapd silently drops messages where it
+// is set on a trap. See `flag_byte` and the module-level docs.
 
 #[derive(Debug, Clone)]
 pub struct V3TrapMessage {
@@ -78,11 +82,13 @@ pub enum V3Security {
 
 impl V3Security {
     fn flag_byte(&self) -> u8 {
-        let base = FLAG_REPORTABLE;
+        // Reportable bit (FLAG_REPORTABLE) is deliberately omitted for trap
+        // PDUs per RFC 3412 §6.4 and Net-SNMP behavior. snmptrapd silently
+        // drops messages where it is set on a trap.
         match self {
-            Self::NoAuthNoPriv => base,
-            Self::AuthNoPriv { .. } => base | FLAG_AUTH,
-            Self::AuthPriv { .. } => base | FLAG_AUTH | FLAG_PRIV,
+            Self::NoAuthNoPriv => 0,
+            Self::AuthNoPriv { .. } => FLAG_AUTH,
+            Self::AuthPriv { .. } => FLAG_AUTH | FLAG_PRIV,
         }
     }
 
@@ -307,7 +313,7 @@ mod tests {
             msg.global_data.security_model,
             Integer::from(SECURITY_MODEL_USM)
         );
-        assert_eq!(msg.global_data.flags.as_ref(), &[FLAG_REPORTABLE]);
+        assert_eq!(msg.global_data.flags.as_ref(), &[0u8]);
 
         let usm = decode_usm_params(&msg);
         assert_eq!(
@@ -350,11 +356,8 @@ mod tests {
         let bytes = build_v3_trap_message(&m).unwrap();
         let msg = decode_message(&bytes);
 
-        // Flags: reportable | auth.
-        assert_eq!(
-            msg.global_data.flags.as_ref(),
-            &[FLAG_REPORTABLE | FLAG_AUTH]
-        );
+        // Flags: auth-only on a trap (reportable is zero per RFC 3412 §6.4).
+        assert_eq!(msg.global_data.flags.as_ref(), &[FLAG_AUTH]);
 
         let usm = decode_usm_params(&msg);
         let received_tag = usm.authentication_parameters.to_vec();
@@ -397,10 +400,7 @@ mod tests {
         let bytes = build_v3_trap_message(&m).unwrap();
         let msg = decode_message(&bytes);
 
-        assert_eq!(
-            msg.global_data.flags.as_ref(),
-            &[FLAG_REPORTABLE | FLAG_AUTH | FLAG_PRIV]
-        );
+        assert_eq!(msg.global_data.flags.as_ref(), &[FLAG_AUTH | FLAG_PRIV]);
 
         let usm = decode_usm_params(&msg);
         // privacyParameters carries the salt (8 BE bytes).
@@ -488,14 +488,17 @@ mod tests {
 
     #[test]
     fn flag_byte_encoding() {
-        assert_eq!(V3Security::NoAuthNoPriv.flag_byte(), 0b100);
+        // Reportable bit is OFF for traps (RFC 3412 §6.4). Bits encode
+        // security level only: noAuthNoPriv=0x00, authNoPriv=0x01,
+        // authPriv=0x03 — verified against Net-SNMP snmptrap byte capture.
+        assert_eq!(V3Security::NoAuthNoPriv.flag_byte(), 0b000);
         assert_eq!(
             V3Security::AuthNoPriv {
                 proto: AuthProtocol::Sha256,
                 auth_key: vec![0u8; 32],
             }
             .flag_byte(),
-            0b101
+            0b001
         );
         assert_eq!(
             V3Security::AuthPriv {
@@ -506,7 +509,7 @@ mod tests {
                 salt: 0,
             }
             .flag_byte(),
-            0b111
+            0b011
         );
     }
 
