@@ -13,6 +13,17 @@ updates:
         patterns:
           - "rasn"
           - "rasn-*"
+      # RustCrypto family used for SNMPv3 USM crypto. These crates
+      # historically bump majors in lockstep when their shared trait
+      # surface (digest, cipher) revs; grouping prevents a single-crate
+      # bump from producing a non-buildable intermediate state.
+      rustcrypto:
+        patterns:
+          - "hmac"
+          - "sha1"
+          - "sha2"
+          - "aes"
+          - "cfb-mode"
       patch-and-minor:
         update-types:
           - "patch"
