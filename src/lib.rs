@@ -9,6 +9,7 @@ pub mod helpers;
 pub mod pdu;
 pub mod transport;
 pub mod usm;
+pub mod v3;
 pub mod varbind;
 
 pub use error::Error;

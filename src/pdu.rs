@@ -86,7 +86,7 @@ pub fn build_v1_trap(t: &V1Trap) -> Result<Vec<u8>, Error> {
     rasn::ber::encode(&message).map_err(|e| Error::Encode(e.to_string()))
 }
 
-fn make_v2_varbind(oid: &[u32], v: VarBindValue) -> Result<snmp_v2::VarBind, Error> {
+pub(crate) fn make_v2_varbind(oid: &[u32], v: VarBindValue) -> Result<snmp_v2::VarBind, Error> {
     let value = match v {
         VarBindValue::Integer(i) => snmp_v2::VarBindValue::Value(smi_v2::ObjectSyntax::Simple(
             smi_v2::SimpleSyntax::Integer(Integer::from(i)),
