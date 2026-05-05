@@ -71,7 +71,10 @@ pub struct Cli {
     )]
     pub timeout: u32,
 
-    /// Spoofed L3 source IPv4 address. Requires CAP_NET_RAW (Linux) or root (macOS).
+    /// Spoofed L3 source IPv4 address. Trap PDUs only; combining --src-addr
+    /// with inform-PDU emission is permanently unsupported by design (the
+    /// receiver's Response would route to the spoofed address, not this
+    /// host). Requires CAP_NET_RAW (Linux) or root (macOS).
     #[arg(long = "src-addr", value_name = "IPv4")]
     pub src_addr: Option<String>,
 

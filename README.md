@@ -129,7 +129,7 @@ The CLI follows a subset of Net-SNMP's flags and positional shapes — scripts t
 **Not supported in this version:**
 
 - SNMPv3 (USM, auth/priv, engineID discovery, all `-3*` flags, `-u`, `-l`, `-a`, `-A`, `-x`, `-X`, `-e`, `-E`, `-n`)
-- Inform PDUs (`-Ci` / `snmpinform`)
+- Inform PDUs (`-Ci` / `snmpinform`). If inform support is added in a future release, combining it with `--src-addr` will remain rejected at the CLI surface — see the **Caveats for `--src-addr`** section for why.
 - IPv6 source spoofing (passing an IPv6 literal to `--src-addr` is rejected)
 - IPv6 destinations (passing a bracketed IPv6 literal in AGENT is rejected)
 - MIB resolution (`-m`, `-M`) — pass numeric OIDs only
@@ -150,6 +150,8 @@ Spoofed source IPs **don't traverse most production networks**:
 The supported environments are: lab networks, container networks (Docker bridge, Kubernetes pod networks), VLAN-isolated test segments, and network namespaces.
 
 If `--src-addr` is set but the binary lacks `CAP_NET_RAW`, you'll see a structured error message naming the precise remediation (the `setcap` recipe on Linux, `sudo` on macOS) plus the underlying errno in parentheses. The default code path (without `--src-addr`) does not need any capability.
+
+**Inform PDUs are intentionally out of scope for `--src-addr`, permanently.** Even if a future release adds inform-PDU emission to this binary, the `--src-addr` + inform combination will be rejected at the CLI surface. An InformRequest expects a Response from the receiver, addressed to the request's source IP — and that's the spoofed address, which routes elsewhere (or gets dropped at the same BCP38/cloud-NIC layers above). Recovering the Response would require raw L2 capture (AF_PACKET on Linux, `/dev/bpf*` on macOS), per-OS capability divergence beyond `CAP_NET_RAW`, and same-L2 placement relative to the receiver — out of scope for a single-binary CLI. The decision is captured as the `Requirement: --src-addr applies to trap PDUs only` clause in `openspec/specs/source-ip-spoofing/spec.md`.
 
 ## Build / Test
 
