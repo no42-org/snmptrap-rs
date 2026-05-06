@@ -429,7 +429,9 @@ mod tests {
         iv[4..8].copy_from_slice(&m.engine_time.to_be_bytes());
         iv[8..16].copy_from_slice(&salt.to_be_bytes());
 
-        use aes::cipher::{AsyncStreamCipher, KeyIvInit};
+        // cipher 0.5 / cfb-mode 0.9: `decrypt` is now an inherent method on
+        // `Decryptor`; only `KeyIvInit` is needed for the constructor.
+        use aes::cipher::KeyIvInit;
         let mut buf = encrypted;
         cfb_mode::Decryptor::<aes::Aes128>::new_from_slices(&priv_key, &iv)
             .unwrap()
