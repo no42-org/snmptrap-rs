@@ -6,8 +6,13 @@
 //!   and 3DES-CBC are rejected at CLI parse time.
 //! - Password localization: RFC 3414 §A.2 extended for SHA-2 per RFC 7860 §3.4.
 
-use aes::cipher::{AsyncStreamCipher, KeyIvInit};
-use hmac::{Hmac, Mac};
+// cipher 0.5 (used by aes 0.9 / cfb-mode 0.9) made `encrypt`/`decrypt`
+// inherent methods on `cfb_mode::Encryptor`/`Decryptor` rather than trait
+// methods on `AsyncStreamCipher`, so only `KeyIvInit` is needed for the
+// constructor. hmac 0.13 split `new_from_slice` off the `Mac` trait onto
+// `KeyInit`; the `Mac` trait is still used for `update` and `finalize`.
+use aes::cipher::KeyIvInit;
+use hmac::{Hmac, KeyInit, Mac};
 use sha1::{Digest as _, Sha1};
 use sha2::{Sha224, Sha256, Sha384, Sha512};
 
@@ -218,31 +223,31 @@ pub fn auth_sign(message: &[u8], auth_key: &[u8], proto: AuthProtocol) -> Vec<u8
     );
     let full = match proto {
         AuthProtocol::Sha1 => {
-            let mut mac =
-                <Hmac<Sha1> as Mac>::new_from_slice(auth_key).expect("HMAC accepts any key length");
+            let mut mac = <Hmac<Sha1> as KeyInit>::new_from_slice(auth_key)
+                .expect("HMAC accepts any key length");
             mac.update(message);
             mac.finalize().into_bytes().to_vec()
         }
         AuthProtocol::Sha224 => {
-            let mut mac = <Hmac<Sha224> as Mac>::new_from_slice(auth_key)
+            let mut mac = <Hmac<Sha224> as KeyInit>::new_from_slice(auth_key)
                 .expect("HMAC accepts any key length");
             mac.update(message);
             mac.finalize().into_bytes().to_vec()
         }
         AuthProtocol::Sha256 => {
-            let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(auth_key)
+            let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(auth_key)
                 .expect("HMAC accepts any key length");
             mac.update(message);
             mac.finalize().into_bytes().to_vec()
         }
         AuthProtocol::Sha384 => {
-            let mut mac = <Hmac<Sha384> as Mac>::new_from_slice(auth_key)
+            let mut mac = <Hmac<Sha384> as KeyInit>::new_from_slice(auth_key)
                 .expect("HMAC accepts any key length");
             mac.update(message);
             mac.finalize().into_bytes().to_vec()
         }
         AuthProtocol::Sha512 => {
-            let mut mac = <Hmac<Sha512> as Mac>::new_from_slice(auth_key)
+            let mut mac = <Hmac<Sha512> as KeyInit>::new_from_slice(auth_key)
                 .expect("HMAC accepts any key length");
             mac.update(message);
             mac.finalize().into_bytes().to_vec()
