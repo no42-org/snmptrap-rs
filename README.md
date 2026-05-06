@@ -113,7 +113,14 @@ snmptrap-rs -v 3 -u alice -l authPriv \
 
 When `-E` is unset and `--src-addr` is set, the authoritative engine-ID is derived from the spoofed IPv4 per RFC 3411 §5 format 1: `80 00 F0 45 01 <X1 X2 X3 X4>` (the prefix is no42.org's IANA Private Enterprise Number 61509 with bit 7 of octet 0 set). The receiver sees `198.51.100.42` at L3 *and* the engine-ID encoding that same address — the v3 analogue of v1's `agent-addr` ↔ `--src-addr` coherence.
 
-A receiver that performs USM key localization needs a `createUser -e <engine-id> <user> <auth-proto> "<auth-pass>" <priv-proto> "<priv-pass>"` entry matching the engine-ID on the wire; without that, snmptrapd silently drops the trap. See [Engine-ID handling (SNMPv3)](#engine-id-handling-snmpv3) below for the full default-resolution cascade.
+For the example IP above (`198.51.100.42` = `0xC6 0x33 0x64 0x2A`), the on-the-wire engine-ID is `0x8000F04501C633642A`, and snmptrapd needs:
+
+```
+createUser -e 0x8000F04501C633642A alice SHA-256 "authpassword1234" AES "privpassword1234"
+authUser log alice priv
+```
+
+Without that entry (matching the engine-ID byte-for-byte), Net-SNMP localizes auth/priv keys against snmptrapd's own engine-ID, our HMAC doesn't verify, and snmptrapd silently drops the trap. See [Engine-ID handling (SNMPv3)](#engine-id-handling-snmpv3) below for the full default-resolution cascade.
 
 ### Debug the bytes on the wire
 
@@ -201,7 +208,17 @@ The supported environments are: lab networks, container networks (Docker bridge,
 
 If `--src-addr` is set but the binary lacks `CAP_NET_RAW`, you'll see a structured error message naming the precise remediation (the `setcap` recipe on Linux, `sudo` on macOS) plus the underlying errno in parentheses. The default code path (without `--src-addr`) does not need any capability.
 
-**`engineBoots = 1` per invocation (SNMPv3).** snmptrap-rs is stateless — there is no on-disk boot counter. Every v3 trap carries `engineBoots = 1` and `engineTime = elapsed seconds since process start`. RFC 3414 §3.2 makes timeliness windowing SHOULD-level for traps (vs MUST-level for confirmed PDUs), so most receivers tolerate this. Receivers configured with strict timeliness windows on traps may discard ours when they see `engineBoots = 1` repeatedly with monotonically-shifting `engineTime` and no boot increment between bursts. If you hit that, pass a fixed `-E ENGINE-ID` so the receiver gets per-engine state with a predictable boundary, or run the binary fresh each time so `engineTime` stays small. Persistent boot-counter state is a deferred follow-up.
+**`engineBoots = 1` per invocation (SNMPv3).** snmptrap-rs is stateless — there is no on-disk boot counter. Every v3 trap carries `engineBoots = 1` and `engineTime = elapsed seconds since process start`. RFC 3414 §3.2 makes timeliness windowing SHOULD-level for traps (vs MUST-level for confirmed PDUs), so most receivers tolerate this.
+
+Strict-window receivers may discard our traps in a specific pattern: across CLI invocations from the same engine-ID, they cache the last-seen `(engineBoots, engineTime)` and check timeliness against the *new* tuple. Because `engineBoots` stays at `1` and `engineTime` resets to ~0 each time the binary starts, a second invocation seconds after the first sends `engineTime` going *backwards* under the same `engineBoots` — which strict receivers reject as out-of-window.
+
+There isn't a clean fix at the CLI level. Practical options:
+
+- **Live with it.** Most receivers accept; the failure is audible (no ack since traps are unconfirmed, but receiver logs flag the rejection).
+- **Emit all traps from one long-lived process** (a test harness invoking the binary in a loop within one process — though our CLI exits after each trap, so this requires a wrapper). `engineTime` grows monotonically within one process.
+- **Vary `-E` per invocation** so each invocation looks like a different engine to the receiver. Loses identity correlation but avoids the timeliness check entirely.
+
+Persistent boot-counter state (a small file under `~/.config/snmptrap-rs/engine-state` incremented per invocation) would solve this cleanly and is tracked as a deferred follow-up.
 
 **Inform PDUs are intentionally out of scope for `--src-addr`, permanently.** Even if a future release adds inform-PDU emission to this binary, the `--src-addr` + inform combination will be rejected at the CLI surface. An InformRequest expects a Response from the receiver, addressed to the request's source IP — and that's the spoofed address, which routes elsewhere (or gets dropped at the same BCP38/cloud-NIC layers above). Recovering the Response would require raw L2 capture (AF_PACKET on Linux, `/dev/bpf*` on macOS), per-OS capability divergence beyond `CAP_NET_RAW`, and same-L2 placement relative to the receiver — out of scope for a single-binary CLI. The decision is captured as the `Requirement: --src-addr applies to trap PDUs only` clause in `openspec/specs/source-ip-spoofing/spec.md`.
 
