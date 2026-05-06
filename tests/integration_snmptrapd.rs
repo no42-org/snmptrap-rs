@@ -461,14 +461,27 @@ fn eperm_emits_setcap_remediation_on_linux() {
 // check end-to-end.
 //
 // All three tests use the same fixed authoritative engine-ID
-// `0x80001f88040102030405` (RFC 3411 §5 format 5, 10 bytes admin-defined).
+// `0x8000f045050102030405` (10 bytes total):
+//   octets 0..3  80 00 F0 45  — IANA PEN 61509 (no42.org), high bit set
+//                                on octet 0 per RFC 3411 §5
+//   octet  4     05           — format 5 (admin-defined octets)
+//   octets 5..9  01 02 03 04 05  — 5 admin payload bytes
 // snmptrapd.conf has matching `createUser -e <same-engine-id>` entries
 // so its key localization agrees with ours. Auth/priv passwords are
 // pinned to "authpassword1234" / "privpassword1234" (both 16 chars,
 // satisfying the RFC 3414 §11.2 ≥8-char floor).
+//
+// Predicates below grep for `SNMP v3` AND `user <name>,` (with the
+// trailing comma from snmptrapd's `%P` expansion). The `SNMP v3` token
+// asserts that what arrived was actually v3 — without it, a regression
+// downgrading v3 emission to v2c could slip through (format2 fires for
+// both versions and emits the literal `v=2c` token regardless). The
+// trailing comma anchors past the user-name end so `user testAuth,`
+// cannot accidentally match a `user testNoAuth, …` log line from a
+// neighbouring test.
 // ─────────────────────────────────────────────────────────────────────────
 
-const V3_TEST_ENGINE_ID_HEX: &str = "0x80001f88040102030405";
+const V3_TEST_ENGINE_ID_HEX: &str = "0x8000f045050102030405";
 
 #[test]
 #[ignore = "requires docker"]
@@ -488,11 +501,13 @@ fn v3_noauthnopriv_trap_arrives_at_snmptrapd() {
         "12345",
         "1.3.6.1.6.3.1.1.5.1",
     ]);
-    // %P for v3 expands to "USM,SNMP v3,user testNoAuth,secLevel ..." —
-    // the user name is the unique-to-v3-this-test token to grep on.
+    // %P for v3 expands to "TRAP2, SNMP v3, user testNoAuth, ..." — assert
+    // both `SNMP v3` (proves the wire was v3, not just format2 firing for
+    // v2c) and `user testNoAuth,` (with trailing comma so `user testAuth,`
+    // can't false-match a `testNoAuth` line).
     let line = wait_for_log_line(
         baseline,
-        |l| l.contains("testNoAuth"),
+        |l| l.contains("SNMP v3") && l.contains("user testNoAuth,"),
         Duration::from_secs(5),
     )
     .expect("v3 noAuthNoPriv trap not seen in log");
@@ -528,11 +543,18 @@ fn v3_authnopriv_sha256_trap_arrives_at_snmptrapd() {
     // recompute (different key derivation, wrong placeholder zero-fill,
     // off-by-one truncation, etc.), snmptrapd silently drops and the wait
     // times out — that's the wire-format check.
-    let line = wait_for_log_line(baseline, |l| l.contains("testAuth"), Duration::from_secs(5))
-        .expect(
-            "v3 authNoPriv trap not seen — HMAC may have failed verification \
+    // Anchor on the trailing `,` so `user testAuth,` cannot substring-match
+    // a `testNoAuth` line, and on `SNMP v3` so a regression downgrading to
+    // v2c can't slip through.
+    let line = wait_for_log_line(
+        baseline,
+        |l| l.contains("SNMP v3") && l.contains("user testAuth,"),
+        Duration::from_secs(5),
+    )
+    .expect(
+        "v3 authNoPriv trap not seen — HMAC may have failed verification \
          (SHA-256 KDF, message bytes, or auth-param truncation mismatch)",
-        );
+    );
     assert!(
         line.contains("1.3.6.1.6.3.1.1.5.1") || line.contains("coldStart"),
         "expected trap-OID in line: {line}"
@@ -570,11 +592,15 @@ fn v3_authpriv_sha256_aes128_trap_arrives_at_snmptrapd() {
     // engineTime(4) || salt(8)), priv-key derivation (SHA-256 KDF
     // truncated to 16 bytes), and the HMAC splice must all agree with
     // snmptrapd's interpretation of RFC 3826 + RFC 7860.
-    let line = wait_for_log_line(baseline, |l| l.contains("testPriv"), Duration::from_secs(5))
-        .expect(
-            "v3 authPriv trap not seen — AES decrypt or HMAC may have failed \
+    let line = wait_for_log_line(
+        baseline,
+        |l| l.contains("SNMP v3") && l.contains("user testPriv,"),
+        Duration::from_secs(5),
+    )
+    .expect(
+        "v3 authPriv trap not seen — AES decrypt or HMAC may have failed \
          (priv-key derivation, IV layout, or salt encoding mismatch)",
-        );
+    );
     assert!(
         line.contains("1.3.6.1.6.3.1.1.5.1") || line.contains("coldStart"),
         "expected trap-OID in line: {line}"
