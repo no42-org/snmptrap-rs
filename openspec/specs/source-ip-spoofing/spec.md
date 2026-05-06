@@ -1,7 +1,10 @@
 # source-ip-spoofing Specification
 
 ## Purpose
-TBD - created by archiving change add-snmptrap-rs. Update Purpose after archive.
+
+Forging the L3 IPv4 source address of an outbound trap from inside the binary, gated on `CAP_NET_RAW` (Linux) or root (macOS), with deterministic, helpful failure modes when the capability is not granted. Applies to SNMP **trap PDUs only** (v1 Trap-PDU, v2c SNMPv2-Trap, v3 SNMPv2-Trap-in-USM). Combining `--src-addr` with InformRequest PDUs is permanently unsupported by design — the receiver's Response would route to the spoofed address rather than this host, and recovering it would require raw L2 receive plus same-L2 placement, both out of scope for a single-binary spoofed-emit tool.
+
+For SNMPv1, the in-PDU `agent-addr` field defaults to `--src-addr` when the user passes the empty positional. For SNMPv3, the authoritative engine-ID defaults to a format-1 (IPv4) derivation from `--src-addr` when `-E` is unset. Both are coherence defaults — when the user spoofs the L3 source, the in-protocol device identity follows by default.
 ## Requirements
 ### Requirement: Source-address override flag
 

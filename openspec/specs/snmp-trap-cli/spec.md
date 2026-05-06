@@ -1,7 +1,8 @@
 # snmp-trap-cli Specification
 
 ## Purpose
-TBD - created by archiving change add-snmptrap-rs. Update Purpose after archive.
+
+Sending SNMP trap PDUs (v1, v2c, v3) from a command-line tool with a working subset of Net-SNMP's `snmptrap` argument grammar. Owns CLI parsing, var-bind type-letter handling, ASN.1/BER encoding, the SNMPv3 USM message wrapper (engine-ID resolution, password-to-key localization, HMAC sign, AES-CFB priv), and the default UDP transport. Numeric OIDs only (no MIB resolution). Modern crypto only — HMAC-MD5, DES-CBC, and 3DES-CBC are rejected at CLI parse time per RFC 8996 deprecation guidance.
 ## Requirements
 ### Requirement: Binary invocation and argument parsing
 
@@ -10,7 +11,7 @@ The system SHALL provide a `snmptrap-rs` executable whose argument grammar is a 
 The executable SHALL accept:
 
 - `-v {1|2c|3}` — SNMP version selector. Required.
-- `-c <COMMUNITY>` — community string. Required for `-v 1` and `-v 2c`; empty community SHALL be rejected. Silently ignored for `-v 3` (matches Net-SNMP behavior; community is not used in USM).
+- `-c <COMMUNITY>` — community string. Required for `-v 1` and `-v 2c`, where an empty value SHALL be rejected. Silently ignored for `-v 3` (matches Net-SNMP behavior; community is not used in USM), where any value — including the empty default — is permitted.
 - `-r <RETRIES>` — retry count for transport-level resends. Default 0 for traps.
 - `-t <TIMEOUT>` — accepted for Net-SNMP CLI compatibility. Trap PDUs are unconfirmed (no peer ack to time out against), so `-t` SHALL have no observable effect on trap emission; the value is parsed and validated (must be > 0) but not honored. Reserved for future inform-PDU support.
 - `--src-addr <IPv4>` — see `source-ip-spoofing` capability. Applies to trap PDUs only; combining `--src-addr` with inform-PDU emission is permanently unsupported by design (see the `Requirement: --src-addr applies to trap PDUs only` clause in the `source-ip-spoofing` spec).
@@ -22,7 +23,7 @@ The executable SHALL accept:
 
 When `-v 3` is selected, the executable SHALL additionally accept the SNMPv3-specific flags (see the *SNMPv3 USM security parameters* and *SNMPv3 engine-ID handling* requirements):
 
-- `-l <noAuthNoPriv|authNoPriv|authPriv>` — security level. Default `noAuthNoPriv` if omitted (matches Net-SNMP).
+- `-l <noAuthNoPriv|authNoPriv|authPriv>` — security level. Default `noAuthNoPriv` if omitted under `-v 3`. (Net-SNMP's `snmptrap` requires `-l` explicitly; this binary defaults instead, since the most common trap shape is unauthenticated.)
 - `-u <USER>` — USM user name. Required when `-v 3`.
 - `-a <SHA|SHA-224|SHA-256|SHA-384|SHA-512>` — auth protocol. Required when `-l` is `authNoPriv` or `authPriv`.
 - `-A <AUTH-PASS>` — auth password. Required when `-a` is set.
