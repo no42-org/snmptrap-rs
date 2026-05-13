@@ -13,7 +13,14 @@ pub enum Error {
     },
     /// Spoofing requested but the platform doesn't expose raw IPv4 + IP_HDRINCL.
     Unsupported(String),
-    /// Routing/EMSGSIZE/etc. — anything network-layer that is NOT a capability problem.
+    /// Raw send refused with `EMSGSIZE` because the encoded SNMP payload, plus
+    /// IPv4+UDP headers, exceeds the egress path MTU and the spoofed-emit path
+    /// sets DF=1 by design (see `openspec/specs/source-ip-spoofing/spec.md`).
+    PayloadExceedsMtu {
+        payload_len: usize,
+        underlying: io::Error,
+    },
+    /// Routing/etc. — anything network-layer that is NOT a capability problem.
     Routing(io::Error),
     /// SNMP encoding failure.
     Encode(String),
@@ -92,6 +99,24 @@ impl fmt::Display for Error {
                 write!(f, "(raw socket open failed: {underlying})")
             }
             Self::Unsupported(msg) => write!(f, "{msg}"),
+            Self::PayloadExceedsMtu {
+                payload_len,
+                underlying,
+            } => {
+                let total = payload_len + 20 + 8;
+                writeln!(
+                    f,
+                    "SNMP payload is {payload_len} bytes ({total} bytes on the wire after IP+UDP headers) and exceeds the egress interface path MTU."
+                )?;
+                writeln!(f)?;
+                writeln!(
+                    f,
+                    "The --src-addr code path sets the IPv4 Don't-Fragment bit by design, so the kernel refuses to fragment and returns EMSGSIZE."
+                )?;
+                writeln!(f)?;
+                writeln!(f, "Reduce the trap size — drop optional varbinds or split it across multiple traps — or send without --src-addr to let the kernel fragment.")?;
+                write!(f, "(raw send failed: {underlying})")
+            }
             Self::Routing(io) => write!(f, "send failed: {io}"),
             Self::Encode(msg) => write!(f, "encoding error: {msg}"),
             Self::Other(io) => write!(f, "{io}"),

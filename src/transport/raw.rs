@@ -177,9 +177,10 @@ pub fn send_spoofed(
             }
         }
     }
-    Err(classify_raw_send(last_err.unwrap_or_else(|| {
-        std::io::Error::other("raw send_to failed without an OS error")
-    })))
+    Err(classify_raw_send(
+        last_err.unwrap_or_else(|| std::io::Error::other("raw send_to failed without an OS error")),
+        payload.len(),
+    ))
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -214,12 +215,18 @@ fn classify_raw_open(err: std::io::Error) -> Error {
 /// the destination is broadcast/multicast and `SO_BROADCAST` is unset, or a
 /// netfilter/MAC policy rejected the packet. Classify all such cases as
 /// routing-class so the user does not see a spurious `setcap` recipe.
-fn classify_raw_send(err: std::io::Error) -> Error {
+/// `EMSGSIZE` gets a dedicated variant that names the payload size and the
+/// DF=1 design constraint — without context the bare "Message too long"
+/// is uninterpretable.
+fn classify_raw_send(err: std::io::Error, payload_len: usize) -> Error {
     match err.raw_os_error() {
+        Some(libc::EMSGSIZE) => Error::PayloadExceedsMtu {
+            payload_len,
+            underlying: err,
+        },
         Some(libc::EHOSTUNREACH)
         | Some(libc::ENETUNREACH)
         | Some(libc::EADDRNOTAVAIL)
-        | Some(libc::EMSGSIZE)
         | Some(libc::EACCES)
         | Some(libc::EPERM) => Error::Routing(err),
         _ => match err.kind() {
