@@ -114,7 +114,10 @@ impl fmt::Display for Error {
                     "The --src-addr code path sets the IPv4 Don't-Fragment bit by design, so the kernel refuses to fragment and returns EMSGSIZE."
                 )?;
                 writeln!(f)?;
-                writeln!(f, "Reduce the trap size — drop optional varbinds or split it across multiple traps — or send without --src-addr to let the kernel fragment.")?;
+                writeln!(
+                    f,
+                    "Reduce the trap size — drop optional varbinds or split it across multiple traps — or send without --src-addr to let the kernel fragment."
+                )?;
                 write!(f, "(raw send failed: {underlying})")
             }
             Self::Routing(io) => write!(f, "send failed: {io}"),
