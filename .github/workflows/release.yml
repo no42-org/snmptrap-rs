@@ -85,7 +85,7 @@ jobs:
         # toolchain binaries to PATH. Lets `cc-rs`-driven `*-sys` crates
         # compile C code into proper aarch64-musl objects.
         if: matrix.target == 'aarch64-unknown-linux-musl'
-        uses: taiki-e/setup-cross-toolchain-action@129361238c06ff2cc1c4ca5c5d2217af441ffdf6  # v1.40.1
+        uses: taiki-e/setup-cross-toolchain-action@3d9770ce98eb7dbcf378563182a5e8031165f75b  # v1.41.0
         with:
           target: aarch64-unknown-linux-musl
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
