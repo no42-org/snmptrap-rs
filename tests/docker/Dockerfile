@@ -4,7 +4,7 @@
 # `snmptrap` outputs and are independent of this image — bump freely; only
 # re-capture if a future workflow generates fresh fixtures from the container's
 # `snmptrap` binary.
-FROM alpine:3.23.4
+FROM alpine:3.24.0
 
 RUN apk add --no-cache net-snmp net-snmp-tools \
  && mkdir -p /var/log/snmp
