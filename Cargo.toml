@@ -1,6 +1,6 @@
 [package]
 name = "snmptrap-rs"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 # Floor pinned to the rustc that contains every stable feature the source uses
 # (e.g. `usize::is_multiple_of` stabilized in 1.87). Bump together with any
