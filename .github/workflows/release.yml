@@ -27,7 +27,7 @@ jobs:
     outputs:
       tag: ${{ steps.tag.outputs.value }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -62,7 +62,7 @@ jobs:
           - x86_64-unknown-linux-musl
           - aarch64-unknown-linux-musl
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: install rust toolchain
@@ -85,7 +85,7 @@ jobs:
         # toolchain binaries to PATH. Lets `cc-rs`-driven `*-sys` crates
         # compile C code into proper aarch64-musl objects.
         if: matrix.target == 'aarch64-unknown-linux-musl'
-        uses: taiki-e/setup-cross-toolchain-action@3d9770ce98eb7dbcf378563182a5e8031165f75b  # v1.41.0
+        uses: taiki-e/setup-cross-toolchain-action@12b7ad4acfa95a1476779d6c06699b96ec1691f8  # v1.42.0
         with:
           target: aarch64-unknown-linux-musl
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
@@ -118,7 +118,7 @@ jobs:
           - x86_64-apple-darwin
           - aarch64-apple-darwin
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: install rust toolchain
