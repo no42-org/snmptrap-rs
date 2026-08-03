@@ -46,7 +46,7 @@ nix = { version = "0.31", default-features = false, features = ["net"] }
 
 [dev-dependencies]
 hex = "0.4"
-base64 = "0.22"
+base64 = "0.23"
 
 [profile.release]
 # `fat` LTO matches `codegen-units = 1`; `thin` would reintroduce parallelism
