@@ -42,7 +42,7 @@ jobs:
           rustup default stable
           rustc --version
           rustfmt --version
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
       - run: make lint
       - run: make test
       - name: integration-test compile check
@@ -66,7 +66,7 @@ jobs:
           persist-credentials: false
       - name: install build deps
         run: apk add --no-cache make musl-dev
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
       - run: make build
       - run: make test
 
@@ -78,7 +78,7 @@ jobs:
         with:
           persist-credentials: false
       - name: install cargo-deny
-        uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf  # v2.85.5
+        uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad  # v2.85.10
         with:
           tool: cargo-deny
       - run: make license-audit
@@ -100,7 +100,7 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
       - name: configure docker for source-IP preservation
         # Disable docker's userland UDP proxy so packets sent to the host
         # bind preserve their L3 source IP through the bridge into the
@@ -150,7 +150,7 @@ jobs:
         with:
           persist-credentials: false
       - name: install cargo-deny
-        uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf  # v2.85.5
+        uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad  # v2.85.10
         with:
           tool: cargo-deny
       - run: cargo deny check advisories bans sources
