@@ -100,7 +100,7 @@ jobs:
           mkdir -p dist
           cp target/release-static/snmptrap-rs-${{ matrix.target }} dist/
           (cd dist && sha256sum snmptrap-rs-${{ matrix.target }} > snmptrap-rs-${{ matrix.target }}.sha256)
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: snmptrap-rs-${{ matrix.target }}
           path: dist/
@@ -138,7 +138,7 @@ jobs:
           mkdir -p dist
           cp target/release-static/snmptrap-rs-${{ matrix.target }} dist/
           shasum -a 256 dist/snmptrap-rs-${{ matrix.target }} | awk '{print $1 "  snmptrap-rs-${{ matrix.target }}"}' > dist/snmptrap-rs-${{ matrix.target }}.sha256
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: snmptrap-rs-${{ matrix.target }}
           path: dist/
@@ -155,7 +155,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           path: dist/
           merge-multiple: true
@@ -187,7 +187,7 @@ jobs:
             dist/snmptrap-rs-x86_64-apple-darwin
             dist/snmptrap-rs-aarch64-apple-darwin
       - name: publish release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228  # v3.0.2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
         with:
           tag_name: ${{ needs.validate-tag.outputs.tag }}
           files: |
