@@ -25,7 +25,7 @@ path = "src/main.rs"
 [dependencies]
 rasn = "0.28"
 rasn-smi = "0.28"
-rasn-snmp = "0.28"
+rasn-snmp = "0.29"
 clap = { version = "4", features = ["derive"] }
 socket2 = { version = "0.6", features = ["all"] }
 libc = "0.2"
