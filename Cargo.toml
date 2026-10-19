@@ -23,7 +23,7 @@ name = "snmptrap-rs"
 path = "src/main.rs"
 
 [dependencies]
-rasn = "0.28"
+rasn = "0.29"
 rasn-smi = "0.28"
 rasn-snmp = "0.28"
 clap = { version = "4", features = ["derive"] }
