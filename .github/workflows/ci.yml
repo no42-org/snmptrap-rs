@@ -125,7 +125,10 @@ jobs:
         # false and 2/5 tests skip. With caps the test exec's `target/debug/snmptrap-rs`
         # which itself needs caps to actually emit the spoofed packet.
         run: |
-          INTEG_BIN=$(ls -t target/debug/deps/integration_snmptrapd-* 2>/dev/null | grep -v '\.d$' | head -1)
+          # Ask cargo for the path. Rust 1.100 moved test binaries out of
+          # `target/debug/deps/`, so the layout must not be hardcoded.
+          INTEG_BIN=$(cargo test --workspace --all-targets --features integration --no-run --message-format=json \
+            | jq -r 'select(.executable != null and .target.name == "integration_snmptrapd") | .executable')
           test -n "$INTEG_BIN" -a -x "$INTEG_BIN" || { echo "could not find integration test binary" >&2; exit 1; }
           sudo setcap cap_net_raw+ep "$INTEG_BIN"
           sudo setcap cap_net_raw+ep target/debug/snmptrap-rs
