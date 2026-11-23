@@ -42,7 +42,7 @@ aes = "0.9"
 cfb-mode = "0.9"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", default-features = false, features = ["net"] }
+nix = { version = "0.32", default-features = false, features = ["net"] }
 
 [dev-dependencies]
 hex = "0.4"
